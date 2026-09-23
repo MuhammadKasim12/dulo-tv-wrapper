@@ -203,9 +203,24 @@
     }
   };
 
-  window.__duloTvApplySubtitle = function (vttContent, label) {
+  function decodeBase64Utf8(b64) {
+    var binary = atob(b64);
+    var bytes = new Uint8Array(binary.length);
+    for (var i = 0; i < binary.length; i++) bytes[i] = binary.charCodeAt(i);
+    if (window.TextDecoder) return new TextDecoder('utf-8').decode(bytes);
+    return binary; // last-resort fallback: ASCII-only browsers
+  }
+
+  window.__duloTvApplySubtitle = function (vttContentBase64, label) {
     var v = activeVideo();
-    if (!v || !vttContent) return false;
+    if (!v || !vttContentBase64) return false;
+    var vttContent;
+    try {
+      vttContent = decodeBase64Utf8(vttContentBase64);
+    } catch (e) {
+      log('subtitle decode failed: ' + e);
+      return false;
+    }
     var old = document.getElementById('dulo-external-subtitle-track');
     if (old) old.remove();
     var blob = new Blob([vttContent], { type: 'text/vtt' });
@@ -214,7 +229,7 @@
     track.id = 'dulo-external-subtitle-track';
     track.kind = 'subtitles';
     track.label = label || 'External';
-    track.srclang = 'en';
+    track.srclang = (label || 'en').trim().slice(0, 2).toLowerCase() || 'en';
     track.src = url;
     v.appendChild(track);
     track.track.mode = 'showing';
