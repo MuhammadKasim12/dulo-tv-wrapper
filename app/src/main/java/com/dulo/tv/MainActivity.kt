@@ -295,9 +295,24 @@ class MainActivity : Activity(), DuloTvJsBridge.PlaybackListener {
     /** Finds and opens dulo.mov's own search UI (input or icon trigger). */
     private fun openSearch() {
         binding.webview.evaluateJavascript(
-            "window.__duloTvOpenSearch && window.__duloTvOpenSearch();",
-            null
-        )
+            "(window.__duloTvOpenSearch ? window.__duloTvOpenSearch() : false);"
+        ) { result ->
+            runOnUiThread {
+                if (result != "true") {
+                    // No search control on the current page (e.g. a watch/player
+                    // page, which doesn't have one at all) - go home first, where
+                    // dulo.mov's persistent header search always lives, then retry
+                    // once it's loaded and scripts are re-injected.
+                    goHome()
+                    binding.webview.postDelayed({
+                        binding.webview.evaluateJavascript(
+                            "window.__duloTvOpenSearch && window.__duloTvOpenSearch();",
+                            null
+                        )
+                    }, 1500)
+                }
+            }
+        }
     }
 
     private fun withPlaybackState(action: (JSONObject) -> Unit) {

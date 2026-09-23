@@ -346,12 +346,25 @@
 
   function focusSearchInput() {
     var input = document.querySelector(SEARCH_INPUT_SEL);
-    if (!input || !isVisible(input)) return false;
+    if (!input || !isClickable(input)) return false;
     setFocus(input, 'search-input');
     try {
       input.focus();
     } catch (e) { /* ignore */ }
     return true;
+  }
+
+  // Not hidden/inert, but deliberately does NOT require real width/height
+  // like isVisible() does (that's meant for spatial-nav focus candidates).
+  // dulo.mov's own header Search button was found live to report a 0x0
+  // bounding rect (likely a WebView-specific icon-sizing quirk) despite
+  // being a real, clickable, on-screen button - confirmed by clicking it
+  // directly and seeing it correctly reveal the search input.
+  function isClickable(el) {
+    if (!el || el.nodeType !== 1) return false;
+    if (el.closest('[inert], [aria-hidden="true"]')) return false;
+    var st = window.getComputedStyle(el);
+    return st.display !== 'none' && st.visibility !== 'hidden' && st.opacity !== '0';
   }
 
   // No fixed selector for dulo.mov's search trigger is known ahead of time,
@@ -369,7 +382,7 @@
     for (var i = 0; i < candidates.length; i++) {
       var el = candidates[i];
       var label = el.getAttribute('aria-label') || el.getAttribute('title') || labelOf(el) || '';
-      if (SEARCH_LABEL.test(label) && isVisible(el)) {
+      if (SEARCH_LABEL.test(label) && isClickable(el)) {
         try {
           el.click();
         } catch (e) {
