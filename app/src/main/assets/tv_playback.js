@@ -10,6 +10,7 @@
     textTracks: [],
     audioTracks: [],
     pageButtons: [],
+    playbackRate: 1,
   };
 
   function log(msg) {
@@ -107,6 +108,7 @@
     state.pageButtons = scrapeLanguageButtons();
     state.textTracks = readTextTracks(v);
     state.audioTracks = readAudioTracks(v);
+    state.playbackRate = v ? v.playbackRate : 1;
     try {
       if (window.DuloTvBridge && window.DuloTvBridge.onPlaybackMeta) {
         window.DuloTvBridge.onPlaybackMeta(JSON.stringify(state));
@@ -191,6 +193,20 @@
     for (var i = 0; i < v.audioTracks.length; i++) {
       v.audioTracks[i].enabled = i === index;
     }
+    syncState();
+    return true;
+  };
+
+  // playbackRate is a standard HTML5 <video> property, universally
+  // available regardless of the site's own player UI/streaming setup -
+  // unlike quality (which depends on dulo.mov's specific HLS.js instance,
+  // not reachable from an injected script that runs after page load).
+  window.__duloTvSetPlaybackRate = function (rate) {
+    var v = activeVideo();
+    if (!v) return false;
+    var r = parseFloat(rate);
+    if (!isFinite(r) || r <= 0) return false;
+    v.playbackRate = r;
     syncState();
     return true;
   };

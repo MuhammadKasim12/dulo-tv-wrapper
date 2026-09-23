@@ -50,6 +50,8 @@ class MainActivity : Activity(), DuloTvJsBridge.PlaybackListener {
          */
         private val TRUSTED_HOST_ALLOWLIST = setOf("dulo.mov")
 
+        private val SPEED_OPTIONS = listOf(0.5, 0.75, 1.0, 1.25, 1.5, 2.0)
+
         private const val TV_USER_AGENT =
             "Mozilla/5.0 (Linux; Android 12; Android TV; Dulo TV) " +
                 "AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 TV Safari/537.36"
@@ -85,14 +87,6 @@ class MainActivity : Activity(), DuloTvJsBridge.PlaybackListener {
             Log.w(TAG, "bad playback meta", e)
         }
     }
-
-    /**
-     * Best-effort cache of "is a <video> on the page actually playing right now",
-     * backed by tv_playback.js's playback-state pushes (event-driven on
-     * play/pause, so this is current to within one bridge round-trip - not a
-     * live query, since dispatchKeyEvent can't block on evaluateJavascript).
-     */
-    private fun isVideoActivelyPlaying(): Boolean = lastPlaybackMeta.optBoolean("playing", false)
 
     @SuppressLint("SetJavaScriptEnabled")
     private fun setupWebView() {
@@ -231,17 +225,18 @@ class MainActivity : Activity(), DuloTvJsBridge.PlaybackListener {
                 }
             }
         }
-        if (customView != null || isVideoActivelyPlaying()) {
-            // Let the WebView handle D-pad natively instead of routing it through
-            // our spatial-nav bridge, so the player's own keyboard seek/volume
-            // shortcuts (commonly ArrowLeft/Right/Up/Down) can actually reach the
-            // page. customView covers the true Fullscreen-API case; a custom-
-            // skinned inline player (dulo.mov's own, e.g.) never sets customView
-            // at all, so without this check its seek controls could never receive
-            // a real key event - every press was being converted into "move focus
-            // between buttons" before it ever reached the page.
+        if (customView != null) {
+            // True Fullscreen-API video: no overlay UI of ours applies here at
+            // all, hand everything to the native page.
             return super.dispatchKeyEvent(event)
         }
+        // D-pad always routes through our spatial-nav bridge below, even during
+        // playback. An earlier version bypassed Left/Right to the page natively
+        // for seeking, but dulo.mov already exposes "Rewind/Forward 10 seconds"
+        // as ordinary clickable buttons our own nav can reach and activate (as
+        // can Subtitles/Playback settings/etc.) - a partial bypass only made
+        // some of those unreachable (this custom player has no Tab-style
+        // keyboard navigation of its own to fall back on), for no real benefit.
         if (event.action == KeyEvent.ACTION_DOWN && event.keyCode in DPAD_KEYS) {
             Log.d(
                 TAG,
@@ -343,6 +338,17 @@ class MainActivity : Activity(), DuloTvJsBridge.PlaybackListener {
             actions.add { clickLanguageOption(idx) }
         }
 
+        // playbackRate is a standard <video> property, always available
+        // regardless of the site's own player - unlike quality, which would
+        // require reaching into dulo.mov's specific HLS.js instance (not
+        // reachable from script injected after the page has already loaded).
+        val currentRate = state.optDouble("playbackRate", 1.0)
+        for (rate in SPEED_OPTIONS) {
+            val mark = if (Math.abs(rate - currentRate) < 0.01) " ✓" else ""
+            items.add("Speed: ${rate}x$mark")
+            actions.add { setPlaybackRate(rate) }
+        }
+
         items.add("Search OpenSubtitles (en, hi, ta, te…)")
         actions.add { searchOpenSubtitles(state) }
 
@@ -391,6 +397,13 @@ class MainActivity : Activity(), DuloTvJsBridge.PlaybackListener {
     private fun clickLanguageOption(index: Int) {
         binding.webview.evaluateJavascript(
             "window.__duloTvClickLanguageOption($index);",
+            null
+        )
+    }
+
+    private fun setPlaybackRate(rate: Double) {
+        binding.webview.evaluateJavascript(
+            "window.__duloTvSetPlaybackRate && window.__duloTvSetPlaybackRate($rate);",
             null
         )
     }

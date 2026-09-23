@@ -404,12 +404,89 @@
     document.head.appendChild(s);
   }
 
+  // Dulo.mov's own player exposes browser-native concepts (Fullscreen,
+  // Picture-in-picture) that don't make sense inside an already-fullscreen TV
+  // app with no windowing - hide them. Verified via live DOM inspection
+  // (chrome://inspect) that these are the player's actual aria-labels, not a
+  // guess.
+  function injectDuloPlayerStyles() {
+    if (document.getElementById('dulo-tv-player-style')) return;
+    var s = document.createElement('style');
+    s.id = 'dulo-tv-player-style';
+    s.textContent =
+      'button[aria-label="Fullscreen"], button[aria-label="Picture in picture"] {' +
+      'display: none !important;' +
+      '}';
+    document.head.appendChild(s);
+  }
+
+  function isVideoPlayingNow() {
+    var v = document.querySelector('video');
+    return !!(v && !v.paused && !v.ended);
+  }
+
+  // The player's own controls overlay never auto-hides while playing (tested
+  // live: neither synthetic pointer activity nor releasing DOM focus made it
+  // hide, even after several seconds of true idle - it appears to have no
+  // built-in idle-hide at all). Drive it ourselves instead of guessing at
+  // whatever internal trigger it might be missing.
+  var OVERLAY_HIDE_DELAY = 4000;
+  var overlayHideTimer = null;
+
+  function findPlayerControlsOverlay() {
+    var anchor = document.querySelector('button[aria-label="Pause"], button[aria-label="Play"]');
+    return anchor ? anchor.closest('[class*="transition-opacity"]') : null;
+  }
+
+  function showPlayerControlsOverlay() {
+    var overlay = findPlayerControlsOverlay();
+    if (overlay) {
+      overlay.style.opacity = '';
+      overlay.style.pointerEvents = '';
+    }
+    schedulePlayerControlsHide();
+  }
+
+  function hidePlayerControlsOverlay() {
+    if (!isVideoPlayingNow()) return; // only auto-hide while actually playing
+    var overlay = findPlayerControlsOverlay();
+    if (!overlay) return;
+    // NOTE: deliberately does NOT skip hiding when focus is inside the
+    // overlay. Our own spatial nav always keeps *something* focused, and
+    // that's very often a button inside this exact overlay - a "don't hide
+    // while focus is inside" guard here would never let the hide fire at
+    // all (confirmed live: it didn't), since focus never leaves on its own
+    // during video playback. Blur first so a later Enter-on-stale-focus
+    // doesn't silently activate a now-invisible button.
+    if (overlay.contains(document.activeElement)) {
+      document.activeElement.blur();
+    }
+    overlay.style.opacity = '0';
+    overlay.style.pointerEvents = 'none';
+  }
+
+  function schedulePlayerControlsHide() {
+    clearTimeout(overlayHideTimer);
+    overlayHideTimer = setTimeout(hidePlayerControlsOverlay, OVERLAY_HIDE_DELAY);
+  }
+
   function focusIsStale() {
     return !currentFocus || !document.body.contains(currentFocus) || !isVisible(currentFocus);
   }
 
   window.__duloTvHandleKey = function (direction) {
     if (isEditable(document.activeElement)) return false;
+    if (isTrustedHost() && isVideoPlayingNow()) {
+      var overlay = findPlayerControlsOverlay();
+      if (overlay && overlay.style.opacity === '0') {
+        // Controls are currently auto-hidden: this press just reveals them
+        // (matching normal player behavior) rather than also trying to
+        // navigate/activate elements that were invisible a moment ago.
+        showPlayerControlsOverlay();
+        return true;
+      }
+      showPlayerControlsOverlay(); // already visible: reset the idle-hide timer
+    }
     var dir = String(direction || '').toLowerCase();
     if (dir === 'enter' || dir === 'select') return handleEnter();
     if (dir === 'left' || dir === 'right' || dir === 'up' || dir === 'down') {
@@ -454,6 +531,19 @@
 
   document.addEventListener('keydown', onKeyDown, true);
   injectStyles();
+
+  if (isTrustedHost()) {
+    injectDuloPlayerStyles();
+    // Capture-phase 'play' fires for any <video> as soon as playback starts
+    // (including on resume after a pause) - (re)arm the idle-hide timer then.
+    document.addEventListener(
+      'play',
+      function (e) {
+        if (e.target && e.target.tagName === 'VIDEO') showPlayerControlsOverlay();
+      },
+      true
+    );
+  }
 
   if (document.readyState === 'complete' || document.readyState === 'interactive') {
     setTimeout(initialFocus, 400);
