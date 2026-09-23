@@ -52,6 +52,7 @@ class MainActivity : Activity() {
         binding = ActivityMainBinding.inflate(layoutInflater)
         setContentView(binding.root)
 
+        WebView.setWebContentsDebuggingEnabled(BuildConfig.DEBUG)
         setupWebView()
 
         if (savedInstanceState != null) {
