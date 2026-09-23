@@ -1,3 +1,4 @@
 <resources>
     <string name="app_name">Dulo TV</string>
+    <string name="playback_menu_hint">During video: Menu or Captions key → subtitles, audio, OpenSubtitles</string>
 </resources>
