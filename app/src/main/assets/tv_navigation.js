@@ -2,10 +2,9 @@
   var firstInstall = !window.__duloTvNavInstalled;
   if (firstInstall) window.__duloTvNavInstalled = true;
 
-  var NAV_LABELS =
-    /^(home|movies|tv series|tv shows|series|settings|search|apps|my list|profiles?|categories|live|sports|kids|news)$/i;
   var SEE_ALL = /see\s*all|view\s*all|show\s*all|\bmore\b/i;
-  var ROW_Y_THRESHOLD = 56;
+  var SKIP_LINK = /^skip\s*(to\s*)?(the\s*)?(main\s*)?(content|navigation|nav)\b/i;
+  var TRUSTED_HOSTS = ['dulo.cx', 'fmhy.net'];
   var currentFocus = null;
 
   function log(msg) {
@@ -15,6 +14,19 @@
       }
     } catch (e) { /* ignore */ }
     if (window.console && console.log) console.log('[DuloTvNav] ' + msg);
+  }
+
+  // Auto-clicking ("See all", prepare-to-play buttons, etc.) is scoped to
+  // dulo.cx/fmhy.net regardless of which hosts get this script injected, so
+  // basic D-pad movement still works on whatever site a link leads to
+  // without also carrying the click-simulation side effects there.
+  function isTrustedHost() {
+    var h = (location.hostname || '').toLowerCase();
+    for (var i = 0; i < TRUSTED_HOSTS.length; i++) {
+      var host = TRUSTED_HOSTS[i];
+      if (h === host || h.slice(-(host.length + 1)) === '.' + host) return true;
+    }
+    return false;
   }
 
   function labelOf(el) {
@@ -39,6 +51,16 @@
     if (!el) return false;
     var tag = el.tagName;
     return tag === 'INPUT' || tag === 'TEXTAREA' || el.isContentEditable;
+  }
+
+  function isChrome(el) {
+    return !!el.closest(
+      'nav, header, aside, [role="navigation"], [role="banner"], [role="complementary"]'
+    );
+  }
+
+  function isSkipLink(el) {
+    return SKIP_LINK.test(labelOf(el));
   }
 
   function rect(el) {
@@ -68,90 +90,6 @@
       out.push(el);
     });
     return out;
-  }
-
-  function clusterRows(items) {
-    if (!items.length) return [];
-    var sorted = items.slice().sort(function (a, b) {
-      return rect(a).cy - rect(b).cy || rect(a).cx - rect(b).cx;
-    });
-    var rows = [];
-    sorted.forEach(function (el) {
-      var cy = rect(el).cy;
-      var row = null;
-      for (var i = 0; i < rows.length; i++) {
-        var avg = rows[i].sumY / rows[i].items.length;
-        if (Math.abs(cy - avg) <= ROW_Y_THRESHOLD) {
-          row = rows[i];
-          break;
-        }
-      }
-      if (!row) {
-        row = { items: [], sumY: 0, kind: 'content' };
-        rows.push(row);
-      }
-      row.items.push(el);
-      row.sumY += cy;
-    });
-    rows.forEach(function (row) {
-      row.items.sort(function (a, b) {
-        return rect(a).cx - rect(b).cx;
-      });
-      row.avgY = row.sumY / row.items.length;
-      row.kind = classifyRow(row);
-    });
-    rows.sort(function (a, b) {
-      return a.avgY - b.avgY;
-    });
-    return rows;
-  }
-
-  function classifyRow(row) {
-    var navHits = 0;
-    var appHits = 0;
-    row.items.forEach(function (el) {
-      var t = labelOf(el).toLowerCase();
-      if (NAV_LABELS.test(t)) navHits++;
-      if (/app|source|provider|stremio|addon|plugin/i.test(t)) appHits++;
-      if (el.closest('nav, header, [role="navigation"], [role="banner"]')) navHits += 2;
-    });
-    if (navHits >= 2 || (navHits >= 1 && row.items.length <= 8)) return 'nav';
-    if (appHits >= 2 && row.items.length >= 3) return 'apps';
-    return 'content';
-  }
-
-  function buildGrid() {
-    var items = collectFocusables();
-    var rows = clusterRows(items);
-    log('grid rows=' + rows.length + ' focusables=' + items.length);
-    rows.forEach(function (row, idx) {
-      log('  row' + idx + ' kind=' + row.kind + ' n=' + row.items.length);
-    });
-    return rows;
-  }
-
-  function findRowIndex(rows, el) {
-    for (var i = 0; i < rows.length; i++) {
-      if (rows[i].items.indexOf(el) >= 0) return i;
-    }
-    return -1;
-  }
-
-  function indexInRow(row, el) {
-    return row.items.indexOf(el);
-  }
-
-  function nearestInRow(row, cx) {
-    var best = row.items[0];
-    var bestD = 1e9;
-    row.items.forEach(function (el) {
-      var d = Math.abs(rect(el).cx - cx);
-      if (d < bestD) {
-        bestD = d;
-        best = el;
-      }
-    });
-    return best;
   }
 
   function prepareTabOrder(items) {
@@ -197,15 +135,25 @@
 
   function rowContainer(el) {
     if (!el) return null;
+    // Deliberately excludes generic <section>/<article>: those wrap huge
+    // chunks of an ordinary content page (a whole wiki article is often one
+    // <article>), which previously made findSeeAll() match some unrelated
+    // "Learn more"-style link anywhere on the page instead of a real
+    // carousel row's "See all".
     return el.closest(
-      'section, article, [class*="row"], [class*="Row"], [class*="carousel"], [class*="Carousel"], [class*="slider"], [class*="Shelf"], [class*="rail"], [class*="list"]'
+      '[class*="row"], [class*="Row"], [class*="carousel"], [class*="Carousel"], [class*="slider"], [class*="Shelf"], [class*="rail"], [class*="list"]'
     );
   }
 
   function maybeExpandRow(focused) {
+    if (!isTrustedHost()) return;
     var row = rowContainer(focused);
     if (!row) return;
     if (row.dataset.duloSeeAllDone === '1') return;
+    // A real carousel row of poster cards is short; anything this tall is
+    // very unlikely to be a single row and is more likely a big content
+    // wrapper - skip it rather than risk auto-clicking something unrelated.
+    if (rect(row).h > 360) return;
     var seeAll = findSeeAll(row);
     if (!seeAll && row.parentElement) seeAll = findSeeAll(row.parentElement);
     if (seeAll && !seeAll.disabled) {
@@ -225,69 +173,76 @@
     }
   }
 
+  // Land on real page content first, not the persistent header/sidebar chrome
+  // (and never on an off-screen accessibility skip-link, which only becomes
+  // visible once focused and would otherwise look like the "first" item).
   function initialFocus() {
-    var rows = buildGrid();
-    if (!rows.length) return;
-    var navRow = null;
-    for (var i = 0; i < rows.length; i++) {
-      if (rows[i].kind === 'nav') {
-        navRow = rows[i];
-        break;
-      }
+    var items = collectFocusables();
+    if (!items.length) return;
+    var contentItems = items.filter(function (el) {
+      return !isChrome(el) && !isSkipLink(el);
+    });
+    var target = (contentItems.length ? contentItems : items)[0];
+    setFocus(target, 'init');
+  }
+
+  // Geometric ("spatial") nearest-neighbor navigation: for a given direction,
+  // only elements genuinely positioned that way are candidates, scored by
+  // distance along that axis plus a heavier penalty for misalignment on the
+  // other axis. This works across arbitrary layouts (sidebar + topbar +
+  // multi-column article) without needing a page-wide "row" model, which
+  // breaks down as soon as a sidebar column and the main content share
+  // similar Y positions (it was clustering them into the same "row" and
+  // trapping focus in the header/sidebar).
+  function isCandidate(r0, r, direction) {
+    switch (direction) {
+      case 'left': return r.right <= r0.left + 1;
+      case 'right': return r.left >= r0.right - 1;
+      case 'up': return r.bottom <= r0.top + 1;
+      case 'down': return r.top >= r0.bottom - 1;
+      default: return false;
     }
-    if (navRow && navRow.items.length) {
-      setFocus(navRow.items[0], 'init-nav');
-      return;
+  }
+
+  function candidateScore(r0, r, direction) {
+    var primary, secondary;
+    if (direction === 'left' || direction === 'right') {
+      primary = direction === 'left' ? (r0.left - r.right) : (r.left - r0.right);
+      secondary = Math.abs(r0.cy - r.cy);
+    } else {
+      primary = direction === 'up' ? (r0.top - r.bottom) : (r.top - r0.bottom);
+      secondary = Math.abs(r0.cx - r.cx);
     }
-    setFocus(rows[0].items[0], 'init-first');
+    return Math.max(primary, 0) + secondary * 2;
   }
 
   function moveFocus(direction) {
-    var rows = buildGrid();
-    if (!rows.length) return false;
+    var items = collectFocusables();
+    if (!items.length) return false;
 
-    var active = currentFocus || document.activeElement;
-    if (!active || active === document.body) {
+    var active = currentFocus && document.body.contains(currentFocus) ? currentFocus : document.activeElement;
+    if (!active || active === document.body || items.indexOf(active) < 0) {
       initialFocus();
       return true;
     }
 
-    var rowIdx = findRowIndex(rows, active);
-    if (rowIdx < 0) {
-      initialFocus();
-      return true;
-    }
+    var r0 = rect(active);
+    var best = null;
+    var bestScore = Infinity;
+    items.forEach(function (el) {
+      if (el === active) return;
+      var r = rect(el);
+      if (!isCandidate(r0, r, direction)) return;
+      var score = candidateScore(r0, r, direction);
+      if (score < bestScore) {
+        bestScore = score;
+        best = el;
+      }
+    });
 
-    var row = rows[rowIdx];
-    var idx = indexInRow(row, active);
-    var r = rect(active);
-
-    if (direction === 'left' || direction === 'right') {
-      if (idx < 0) idx = 0;
-      var nextIdx = direction === 'left' ? idx - 1 : idx + 1;
-      if (nextIdx < 0) nextIdx = row.items.length - 1;
-      if (nextIdx >= row.items.length) nextIdx = 0;
-      setFocus(row.items[nextIdx], 'wrap-' + direction);
-      return true;
-    }
-
-    if (direction === 'down') {
-      if (rowIdx >= rows.length - 1) return true;
-      var below = rows[rowIdx + 1];
-      var target = nearestInRow(below, r.cx);
-      setFocus(target, 'down row=' + (rowIdx + 1) + ' kind=' + below.kind);
-      return true;
-    }
-
-    if (direction === 'up') {
-      if (rowIdx <= 0) return true;
-      var above = rows[rowIdx - 1];
-      var targetUp = nearestInRow(above, r.cx);
-      setFocus(targetUp, 'up row=' + (rowIdx - 1) + ' kind=' + above.kind);
-      return true;
-    }
-
-    return false;
+    if (!best) return true; // nothing further that way; hold position
+    setFocus(best, 'move-' + direction);
+    return true;
   }
 
   function handleEnter() {
@@ -319,6 +274,10 @@
     document.head.appendChild(s);
   }
 
+  function focusIsStale() {
+    return !currentFocus || !document.body.contains(currentFocus) || !isVisible(currentFocus);
+  }
+
   window.__duloTvHandleKey = function (direction) {
     if (isEditable(document.activeElement)) return false;
     var dir = String(direction || '').toLowerCase();
@@ -329,11 +288,14 @@
     return false;
   };
 
-  window.__duloTvNavRefresh = function () {
-    log('refresh href=' + location.href);
+  // force=true re-picks initial focus even if the current focus is still
+  // valid - used after a same-page section change (e.g. jumping to Stream
+  // Aggregators) so focus actually follows the content into view instead of
+  // staying wherever it happened to be before the jump.
+  window.__duloTvNavRefresh = function (force) {
+    log('refresh href=' + location.href + ' force=' + !!force);
     setTimeout(function () {
-      buildGrid();
-      if (!currentFocus || !document.body.contains(currentFocus)) initialFocus();
+      if (force || focusIsStale()) initialFocus();
     }, 300);
   };
 
@@ -375,13 +337,16 @@
     setTimeout(initialFocus, 600);
   });
 
+  // Re-focus automatically if an SPA route change removes/hides whatever was
+  // focused - a plain validity check, not a forced jump, so ordinary content
+  // updates elsewhere on the page don't yank focus around.
   var debounce;
   new MutationObserver(function () {
     clearTimeout(debounce);
     debounce = setTimeout(function () {
-      buildGrid();
+      if (focusIsStale()) initialFocus();
     }, 500);
   }).observe(document.documentElement, { childList: true, subtree: true });
 
-  log('Netflix-style tv_navigation ready');
+  log('spatial tv_navigation ready');
 })();

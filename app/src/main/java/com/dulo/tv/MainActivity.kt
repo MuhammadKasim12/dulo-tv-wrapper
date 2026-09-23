@@ -41,13 +41,17 @@ class MainActivity : Activity(), DuloTvJsBridge.PlaybackListener {
         private const val STREAM_AGGREGATORS_URL = "https://fmhy.net/video#stream-aggregators"
 
         /**
-         * Only these hosts get tv_navigation.js/tv_playback.js/tv_home.js injected.
-         * Those scripts auto-click "See all"/"more" and anything that looks like a
-         * play button, which is exactly what a third-party streaming site's ad
-         * interstitials look like - so injection (and its side effects) must not
-         * follow the user off of dulo.cx/fmhy.net onto whatever a link points to.
+         * tv_navigation.js (D-pad spatial focus) is injected on every host so the
+         * remote stays usable once the user follows a link off-site. Only these
+         * hosts additionally get tv_playback.js/tv_home.js: those auto-click
+         * "See all"/"more" and anything that looks like a play button, which is
+         * exactly what a third-party streaming site's ad interstitials look
+         * like - so that side effect must not follow the user onto whatever a
+         * link points to. (tv_navigation.js's own auto-"See all" click is
+         * separately gated on this same allowlist at runtime, via
+         * isTrustedHost() in the script itself.)
          */
-        private val INJECT_HOST_ALLOWLIST = setOf("dulo.cx", "fmhy.net")
+        private val TRUSTED_HOST_ALLOWLIST = setOf("dulo.cx", "fmhy.net")
 
         private const val TV_USER_AGENT =
             "Mozilla/5.0 (Linux; Android 12; Android TV; Dulo TV) " +
@@ -121,11 +125,8 @@ class MainActivity : Activity(), DuloTvJsBridge.PlaybackListener {
             override fun onPageFinished(view: WebView?, url: String?) {
                 super.onPageFinished(view, url)
                 Log.d(TAG, "page finished url=$url")
-                val host = url?.let { Uri.parse(it).host }
-                if (view != null && isInjectAllowedHost(host)) {
-                    injectScripts(view)
-                } else {
-                    Log.d(TAG, "skip script injection for host=$host")
+                if (view != null) {
+                    injectScripts(view, url?.let { Uri.parse(it).host })
                 }
             }
         }
@@ -169,20 +170,27 @@ class MainActivity : Activity(), DuloTvJsBridge.PlaybackListener {
     private fun isOnStreamAggregatorsHome(): Boolean =
         binding.webview.url?.contains("stream-aggregators", ignoreCase = true) == true
 
-    private fun isInjectAllowedHost(host: String?): Boolean {
+    private fun isTrustedHost(host: String?): Boolean {
         if (host.isNullOrBlank()) return false
         val h = host.lowercase()
-        return INJECT_HOST_ALLOWLIST.any { h == it || h.endsWith(".$it") }
+        return TRUSTED_HOST_ALLOWLIST.any { h == it || h.endsWith(".$it") }
     }
 
-    private fun injectScripts(webView: WebView) {
+    private fun injectScripts(webView: WebView, host: String?) {
+        // Spatial D-pad navigation is generic/non-destructive - safe on any site.
         injectAsset(webView, "tv_navigation.js")
-        injectAsset(webView, "tv_playback.js")
-        injectAsset(webView, "tv_home.js")
         webView.evaluateJavascript(
             "if (window.__duloTvNavRefresh) window.__duloTvNavRefresh();",
             null
         )
+
+        if (!isTrustedHost(host)) {
+            Log.d(TAG, "host=$host not trusted; skipping playback/home extras")
+            return
+        }
+
+        injectAsset(webView, "tv_playback.js")
+        injectAsset(webView, "tv_home.js")
         webView.evaluateJavascript(
             "setTimeout(function(){ if (window.__duloTvEnsureDefaultSection) window.__duloTvEnsureDefaultSection(); }, 1200);",
             null
@@ -255,7 +263,9 @@ class MainActivity : Activity(), DuloTvJsBridge.PlaybackListener {
     }
 
     private fun showPlaybackMenu() {
-        binding.webview.evaluateJavascript("(window.__duloTvGetPlaybackState());") { raw ->
+        binding.webview.evaluateJavascript(
+            "(window.__duloTvGetPlaybackState ? window.__duloTvGetPlaybackState() : null);"
+        ) { raw ->
             runOnUiThread {
                 openPlaybackDialog(parseJsJson(raw))
             }

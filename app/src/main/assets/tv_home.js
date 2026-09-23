@@ -65,6 +65,11 @@
     if (isOnStreamAggregators()) return;
     log('ensure default section');
     window.__duloTvGoStreamAggregators(false);
+    // Force focus to follow the jump into Stream Aggregators instead of
+    // staying wherever initial page load happened to land it (top nav/sidebar).
+    setTimeout(function () {
+      if (window.__duloTvNavRefresh) window.__duloTvNavRefresh(true);
+    }, 500);
   };
 
   log('tv_home.js ready');
