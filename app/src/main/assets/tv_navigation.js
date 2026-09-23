@@ -425,6 +425,14 @@
     return !!(v && !v.paused && !v.ended);
   }
 
+  // Deliberately broader than isVideoPlayingNow(): Kodi-style seek/play-pause
+  // should engage whenever there's a video to control, paused or not (e.g.
+  // scrubbing while paused, or resuming with Enter) - only the auto-hide
+  // timer specifically cares about "is it actively playing right now".
+  function hasVideo() {
+    return !!document.querySelector('video');
+  }
+
   // The player's own controls overlay never auto-hides while playing (tested
   // live: neither synthetic pointer activity nor releasing DOM focus made it
   // hide, even after several seconds of true idle - it appears to have no
@@ -461,6 +469,12 @@
     if (overlay.contains(document.activeElement)) {
       document.activeElement.blur();
     }
+    // Also drop our own focus tracking, not just DOM focus: otherwise
+    // isBrowsingControls() below would keep reporting "browsing" (based on
+    // currentFocus, not document.activeElement) even after the overlay is
+    // hidden, wrongly keeping Left/Right/Enter in button-navigation mode
+    // instead of falling back to direct seek/play-pause.
+    if (overlay.contains(currentFocus)) currentFocus = null;
     overlay.style.opacity = '0';
     overlay.style.pointerEvents = 'none';
   }
@@ -470,24 +484,64 @@
     overlayHideTimer = setTimeout(hidePlayerControlsOverlay, OVERLAY_HIDE_DELAY);
   }
 
+  // True once the user has explicitly moved focus onto a button inside the
+  // controls overlay (via Up/Down) - only then do Left/Right/Enter mean
+  // "navigate/activate that button row" instead of "seek/toggle play".
+  function isBrowsingControls() {
+    var overlay = findPlayerControlsOverlay();
+    return !!(overlay && currentFocus && document.body.contains(currentFocus) && overlay.contains(currentFocus));
+  }
+
   function focusIsStale() {
     return !currentFocus || !document.body.contains(currentFocus) || !isVisible(currentFocus);
   }
 
+  // Kodi-style playback controls with two modes, distinguished by whether
+  // focus is currently sitting on a button inside the controls overlay:
+  //
+  //  - Default ("seek mode"): Left/Right directly seek and Enter directly
+  //    toggles play/pause (via tv_playback.js against video.currentTime/
+  //    play()/pause(), not dulo.mov's own key handling - found live to be
+  //    unreliable, e.g. a "Left" press was observed increasing currentTime
+  //    instead of decreasing it, and letting these fall through to Android's
+  //    default key handling let the OS intercept them as media-session keys).
+  //  - "Browsing" (entered via Up/Down, which moves focus onto a button):
+  //    Left/Right/Enter fall through to normal spatial nav instead, so the
+  //    user can reach and activate Rewind/Forward/Mute/Subtitles/etc.
+  //    buttons directly - this is what a global always-seek policy would
+  //    otherwise make unreachable.
+  //
+  // Losing focus (idle-hide, or anything that clears currentFocus) drops
+  // back to seek mode automatically.
   window.__duloTvHandleKey = function (direction) {
     if (isEditable(document.activeElement)) return false;
-    if (isTrustedHost() && isVideoPlayingNow()) {
+    var dir = String(direction || '').toLowerCase();
+
+    if (isTrustedHost() && hasVideo()) {
       var overlay = findPlayerControlsOverlay();
       if (overlay && overlay.style.opacity === '0') {
         // Controls are currently auto-hidden: this press just reveals them
-        // (matching normal player behavior) rather than also trying to
-        // navigate/activate elements that were invisible a moment ago.
+        // (matching normal player behavior) rather than also acting on
+        // elements that were invisible a moment ago.
         showPlayerControlsOverlay();
         return true;
       }
       showPlayerControlsOverlay(); // already visible: reset the idle-hide timer
+
+      if (!isBrowsingControls()) {
+        if ((dir === 'left' || dir === 'right') && window.__duloTvSeek) {
+          return window.__duloTvSeek(dir);
+        }
+        if ((dir === 'enter' || dir === 'select') && window.__duloTvTogglePlayPause) {
+          return window.__duloTvTogglePlayPause();
+        }
+        // up/down fall through to moveFocus below, which naturally enters
+        // "browsing" mode by landing focus on a button in the row.
+      }
+      // else: browsing controls - fall through to normal handling below so
+      // Left/Right/Enter move between/activate buttons instead.
     }
-    var dir = String(direction || '').toLowerCase();
+
     if (dir === 'enter' || dir === 'select') return handleEnter();
     if (dir === 'left' || dir === 'right' || dir === 'up' || dir === 'down') {
       return moveFocus(dir);

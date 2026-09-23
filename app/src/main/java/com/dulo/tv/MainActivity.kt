@@ -230,23 +230,39 @@ class MainActivity : Activity(), DuloTvJsBridge.PlaybackListener {
             // all, hand everything to the native page.
             return super.dispatchKeyEvent(event)
         }
-        // D-pad always routes through our spatial-nav bridge below, even during
-        // playback. An earlier version bypassed Left/Right to the page natively
-        // for seeking, but dulo.mov already exposes "Rewind/Forward 10 seconds"
-        // as ordinary clickable buttons our own nav can reach and activate (as
-        // can Subtitles/Playback settings/etc.) - a partial bypass only made
-        // some of those unreachable (this custom player has no Tab-style
-        // keyboard navigation of its own to fall back on), for no real benefit.
+        // D-pad always routes through our spatial-nav bridge below and we always
+        // consume it (never fall through to super.dispatchKeyEvent for these
+        // keys). An earlier version let Left/Right bypass to the page natively
+        // for seeking; falling through to Android's default key handling that
+        // way is what let the OS itself intercept them as media-session
+        // transport keys during playback (observed as Left/Right toggling
+        // play/pause instead of seeking) - a Kodi-style player needs full
+        // control of D-pad, not a native pass-through. Seeking (with
+        // acceleration on repeated presses) and direct play/pause toggling are
+        // now both implemented ourselves in tv_playback.js instead.
         if (event.action == KeyEvent.ACTION_DOWN && event.keyCode in DPAD_KEYS) {
             Log.d(
                 TAG,
                 "key down code=${event.keyCode} (${KeyEvent.keyCodeToString(event.keyCode)}) " +
                     "repeat=${event.repeatCount}"
             )
-            dpadDirection(event.keyCode)?.let { direction ->
-                forwardDpadToPage(direction)
+            val direction = dpadDirection(event.keyCode)
+            if (direction != null) {
+                // repeatCount > 0 means this is the OS's own auto-repeat echo from
+                // a held-down key, not a new press - Android fires these as
+                // additional ACTION_DOWN events (not a separate key-up/down pair)
+                // at whatever rate the platform's repeat timer uses. Forwarding
+                // those too made holding a direction fire many rapid seek
+                // presses, compounding our own streak-based acceleration
+                // explosively (a single "hold" jumped over 600 seconds). Only
+                // forward genuinely new presses; silently ignore repeat echoes.
+                if (event.repeatCount == 0) {
+                    forwardDpadToPage(direction)
+                }
                 return true
             }
+            // BACK isn't mapped to a direction - fall through to
+            // onKeyDown's dedicated back-stack handling, unchanged.
         }
         return super.dispatchKeyEvent(event)
     }
@@ -258,13 +274,17 @@ class MainActivity : Activity(), DuloTvJsBridge.PlaybackListener {
                 arrayOf(
                     "Home",
                     "Search",
-                    "Playback: subtitles & audio…",
+                    "Subtitles",
+                    "Audio track",
+                    "Speed",
                 )
             ) { dialog, which ->
                 when (which) {
                     0 -> goHome()
                     1 -> openSearch()
-                    2 -> showPlaybackMenu()
+                    2 -> withPlaybackState(::openSubtitleDialog)
+                    3 -> withPlaybackState(::openAudioDialog)
+                    4 -> withPlaybackState(::openSpeedDialog)
                 }
                 dialog.dismiss()
             }
@@ -280,12 +300,12 @@ class MainActivity : Activity(), DuloTvJsBridge.PlaybackListener {
         )
     }
 
-    private fun showPlaybackMenu() {
+    private fun withPlaybackState(action: (JSONObject) -> Unit) {
         binding.webview.evaluateJavascript(
             "(window.__duloTvGetPlaybackState ? window.__duloTvGetPlaybackState() : null);"
         ) { raw ->
             runOnUiThread {
-                openPlaybackDialog(parseJsJson(raw))
+                action(parseJsJson(raw))
             }
         }
     }
@@ -305,7 +325,7 @@ class MainActivity : Activity(), DuloTvJsBridge.PlaybackListener {
         }
     }
 
-    private fun openPlaybackDialog(state: JSONObject) {
+    private fun openSubtitleDialog(state: JSONObject) {
         val items = mutableListOf<String>()
         val actions = mutableListOf<() -> Unit>()
 
@@ -315,38 +335,9 @@ class MainActivity : Activity(), DuloTvJsBridge.PlaybackListener {
         val textTracks = state.optJSONArray("textTracks") ?: JSONArray()
         for (i in 0 until textTracks.length()) {
             val tr = textTracks.optJSONObject(i) ?: continue
-            val label = tr.optString("label", "Track ${i + 1}")
-            items.add("Subtitle: $label")
+            items.add(tr.optString("label", "Track ${i + 1}"))
             val idx = tr.optInt("index", i)
             actions.add { selectTextTrack(idx) }
-        }
-
-        val audioTracks = state.optJSONArray("audioTracks") ?: JSONArray()
-        for (i in 0 until audioTracks.length()) {
-            val tr = audioTracks.optJSONObject(i) ?: continue
-            val label = tr.optString("label", "Audio ${i + 1}")
-            items.add("Audio: $label")
-            val idx = tr.optInt("index", i)
-            actions.add { selectAudioTrack(idx) }
-        }
-
-        val pageButtons = state.optJSONArray("pageButtons") ?: JSONArray()
-        for (i in 0 until pageButtons.length()) {
-            val btn = pageButtons.optJSONObject(i) ?: continue
-            items.add("Language/UI: ${btn.optString("label")}")
-            val idx = btn.optInt("index", i)
-            actions.add { clickLanguageOption(idx) }
-        }
-
-        // playbackRate is a standard <video> property, always available
-        // regardless of the site's own player - unlike quality, which would
-        // require reaching into dulo.mov's specific HLS.js instance (not
-        // reachable from script injected after the page has already loaded).
-        val currentRate = state.optDouble("playbackRate", 1.0)
-        for (rate in SPEED_OPTIONS) {
-            val mark = if (Math.abs(rate - currentRate) < 0.01) " ✓" else ""
-            items.add("Speed: ${rate}x$mark")
-            actions.add { setPlaybackRate(rate) }
         }
 
         items.add("Search OpenSubtitles (en, hi, ta, te…)")
@@ -355,8 +346,46 @@ class MainActivity : Activity(), DuloTvJsBridge.PlaybackListener {
         items.add("Set OpenSubtitles API key…")
         actions.add { promptOpenSubtitlesApiKey() }
 
+        showChoiceDialog("Subtitles", items, actions)
+    }
+
+    private fun openAudioDialog(state: JSONObject) {
+        val audioTracks = state.optJSONArray("audioTracks") ?: JSONArray()
+        if (audioTracks.length() == 0) {
+            Toast.makeText(this, "No alternate audio tracks available for this video", Toast.LENGTH_SHORT).show()
+            return
+        }
+        val items = mutableListOf<String>()
+        val actions = mutableListOf<() -> Unit>()
+        for (i in 0 until audioTracks.length()) {
+            val tr = audioTracks.optJSONObject(i) ?: continue
+            items.add(tr.optString("label", "Audio ${i + 1}"))
+            val idx = tr.optInt("index", i)
+            actions.add { selectAudioTrack(idx) }
+        }
+        showChoiceDialog("Audio track", items, actions)
+    }
+
+    // playbackRate is a standard <video> property, always available regardless
+    // of the site's own player - unlike quality, which would require reaching
+    // into dulo.mov's specific hls.js instance (no reference to it is exposed
+    // on window or the video element for script injected after page load to
+    // find, so quality selection isn't offered here at all).
+    private fun openSpeedDialog(state: JSONObject) {
+        val currentRate = state.optDouble("playbackRate", 1.0)
+        val items = mutableListOf<String>()
+        val actions = mutableListOf<() -> Unit>()
+        for (rate in SPEED_OPTIONS) {
+            val mark = if (Math.abs(rate - currentRate) < 0.01) " ✓" else ""
+            items.add("${rate}x$mark")
+            actions.add { setPlaybackRate(rate) }
+        }
+        showChoiceDialog("Playback speed", items, actions)
+    }
+
+    private fun showChoiceDialog(title: String, items: List<String>, actions: List<() -> Unit>) {
         AlertDialog.Builder(this)
-            .setTitle(state.optString("title", "Playback"))
+            .setTitle(title)
             .setItems(items.toTypedArray()) { dialog, which ->
                 if (which in actions.indices) actions[which].invoke()
                 dialog.dismiss()
@@ -390,13 +419,6 @@ class MainActivity : Activity(), DuloTvJsBridge.PlaybackListener {
     private fun selectAudioTrack(index: Int) {
         binding.webview.evaluateJavascript(
             "window.__duloTvSelectAudioTrack($index);",
-            null
-        )
-    }
-
-    private fun clickLanguageOption(index: Int) {
-        binding.webview.evaluateJavascript(
-            "window.__duloTvClickLanguageOption($index);",
             null
         )
     }

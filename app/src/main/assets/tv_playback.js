@@ -197,6 +197,64 @@
     return true;
   };
 
+  // Seeking is done entirely ourselves via video.currentTime rather than
+  // relying on dulo.mov's own arrow-key handling: that was found to be
+  // unreliable (a "Left" press was observed increasing currentTime instead
+  // of decreasing it) and gives no control over acceleration on repeated
+  // presses. Consecutive same-direction presses within SEEK_STREAK_RESET_MS
+  // double the step (10s, 20s, 40s, 80s, capped), matching typical
+  // fast-forward/rewind acceleration; any pause, direction change, or gap
+  // longer than that resets it back to the base step.
+  var SEEK_BASE_SECONDS = 10;
+  var SEEK_MAX_STEP_SECONDS = 120;
+  var SEEK_STREAK_RESET_MS = 1200;
+  var seekStreak = 0;
+  var seekStreakDirection = null;
+  var seekStreakTimer = null;
+
+  window.__duloTvSeek = function (direction) {
+    var v = activeVideo();
+    if (!v) return false;
+    var sign = direction === 'right' ? 1 : direction === 'left' ? -1 : 0;
+    if (!sign) return false;
+
+    if (seekStreakDirection !== direction) seekStreak = 0;
+    seekStreakDirection = direction;
+    seekStreak++;
+    clearTimeout(seekStreakTimer);
+    seekStreakTimer = setTimeout(function () {
+      seekStreak = 0;
+      seekStreakDirection = null;
+    }, SEEK_STREAK_RESET_MS);
+
+    var amount = Math.min(SEEK_BASE_SECONDS * Math.pow(2, seekStreak - 1), SEEK_MAX_STEP_SECONDS);
+    var duration = isFinite(v.duration) ? v.duration : Infinity;
+    var before = v.currentTime;
+    v.currentTime = Math.max(0, Math.min(duration, before + sign * amount));
+    log(
+      'seek ' + direction + ' streak=' + seekStreak + ' amount=' + amount +
+      's ' + before.toFixed(1) + ' -> ' + v.currentTime.toFixed(1)
+    );
+    syncState();
+    return true;
+  };
+
+  // Direct play/pause toggle against the <video> element itself, not
+  // "activate whatever happens to be focused" - the latter is unreliable as
+  // a play/pause control since focus may not be on the Play/Pause button at
+  // all (e.g. right after a seek, or after Up/Down moved it elsewhere).
+  window.__duloTvTogglePlayPause = function () {
+    var v = activeVideo();
+    if (!v) return false;
+    if (v.paused || v.ended) {
+      v.play().catch(function () { /* needs gesture on some builds */ });
+    } else {
+      v.pause();
+    }
+    syncState();
+    return true;
+  };
+
   // playbackRate is a standard HTML5 <video> property, universally
   // available regardless of the site's own player UI/streaming setup -
   // unlike quality (which depends on dulo.mov's specific HLS.js instance,
