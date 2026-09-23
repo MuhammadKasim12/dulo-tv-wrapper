@@ -16,9 +16,8 @@ import com.dulo.tv.databinding.ActivityMainBinding
 /**
  * Single-activity Android TV WebView wrapper for https://dulo.cx.
  *
- * Injects [tv_navigation.js] to keep top nav (Home / Movies / TV Series / Settings)
- * from stealing D-pad focus while browsing rows, auto-expands "See all" rows, and
- * logs navigation to Logcat tag [DuloTvNav].
+ * Injects [tv_navigation.js] for Netflix-style row navigation (wrap within rows,
+ * move between rows/apps/nav on up/down) and logs to Logcat tag [DuloTvNav].
  */
 class MainActivity : Activity() {
 
@@ -148,14 +147,37 @@ class MainActivity : Activity() {
     }
 
     override fun dispatchKeyEvent(event: KeyEvent): Boolean {
+        if (customView != null) {
+            return super.dispatchKeyEvent(event)
+        }
         if (event.action == KeyEvent.ACTION_DOWN && event.keyCode in DPAD_KEYS) {
             Log.d(
                 TAG,
                 "key down code=${event.keyCode} (${KeyEvent.keyCodeToString(event.keyCode)}) " +
                     "repeat=${event.repeatCount}"
             )
+            dpadDirection(event.keyCode)?.let { direction ->
+                forwardDpadToPage(direction)
+                return true
+            }
         }
         return super.dispatchKeyEvent(event)
+    }
+
+    private fun dpadDirection(keyCode: Int): String? = when (keyCode) {
+        KeyEvent.KEYCODE_DPAD_LEFT -> "left"
+        KeyEvent.KEYCODE_DPAD_RIGHT -> "right"
+        KeyEvent.KEYCODE_DPAD_UP -> "up"
+        KeyEvent.KEYCODE_DPAD_DOWN -> "down"
+        KeyEvent.KEYCODE_DPAD_CENTER, KeyEvent.KEYCODE_ENTER -> "enter"
+        else -> null
+    }
+
+    private fun forwardDpadToPage(direction: String) {
+        binding.webview.evaluateJavascript(
+            "window.__duloTvHandleKey && window.__duloTvHandleKey('$direction');",
+            null
+        )
     }
 
     override fun onKeyDown(keyCode: Int, event: KeyEvent?): Boolean {
