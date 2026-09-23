@@ -4,7 +4,7 @@
 
   var SEE_ALL = /see\s*all|view\s*all|show\s*all|\bmore\b/i;
   var SKIP_LINK = /^skip\s*(to\s*)?(the\s*)?(main\s*)?(content|navigation|nav)\b/i;
-  var TRUSTED_HOSTS = ['dulo.cx', 'fmhy.net'];
+  var TRUSTED_HOSTS = ['dulo.mov'];
   var currentFocus = null;
 
   function log(msg) {
@@ -17,9 +17,9 @@
   }
 
   // Auto-clicking ("See all", prepare-to-play buttons, etc.) is scoped to
-  // dulo.cx/fmhy.net regardless of which hosts get this script injected, so
-  // basic D-pad movement still works on whatever site a link leads to
-  // without also carrying the click-simulation side effects there.
+  // dulo.mov regardless of which hosts get this script injected, so basic
+  // D-pad movement still works on whatever site a link leads to without
+  // also carrying the click-simulation side effects there.
   function isTrustedHost() {
     var h = (location.hostname || '').toLowerCase();
     for (var i = 0; i < TRUSTED_HOSTS.length; i++) {

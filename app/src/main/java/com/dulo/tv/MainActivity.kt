@@ -22,7 +22,7 @@ import org.json.JSONObject
 import org.json.JSONTokener
 
 /**
- * WebView wrapper for https://dulo.cx with TV navigation, playback helpers,
+ * WebView wrapper for https://dulo.mov with TV navigation, playback helpers,
  * OpenSubtitles-style external subtitles, and in-page language/track selection.
  */
 class MainActivity : Activity(), DuloTvJsBridge.PlaybackListener {
@@ -36,22 +36,19 @@ class MainActivity : Activity(), DuloTvJsBridge.PlaybackListener {
 
     companion object {
         private const val TAG = "DuloTvNav"
-        /** dulo.cx redirects to fmhy video wiki; hash opens Stream Aggregators by default. */
-        private const val HOME_URL = "https://dulo.cx"
-        private const val STREAM_AGGREGATORS_URL = "https://fmhy.net/video#stream-aggregators"
+        private const val HOME_URL = "https://dulo.mov"
 
         /**
          * tv_navigation.js (D-pad spatial focus) is injected on every host so the
-         * remote stays usable once the user follows a link off-site. Only these
-         * hosts additionally get tv_playback.js/tv_home.js: those auto-click
-         * "See all"/"more" and anything that looks like a play button, which is
-         * exactly what a third-party streaming site's ad interstitials look
-         * like - so that side effect must not follow the user onto whatever a
-         * link points to. (tv_navigation.js's own auto-"See all" click is
-         * separately gated on this same allowlist at runtime, via
-         * isTrustedHost() in the script itself.)
+         * remote stays usable even if the user follows a link off dulo.mov. Only
+         * these hosts additionally get tv_playback.js: it auto-clicks anything
+         * that looks like a "prepare/tap to play" button, which is exactly what
+         * a third-party site's ad interstitials look like - so that side effect
+         * must not follow the user onto whatever a link points to.
+         * (tv_navigation.js's own auto-"See all" click is separately gated on
+         * this same allowlist at runtime, via isTrustedHost() in the script.)
          */
-        private val TRUSTED_HOST_ALLOWLIST = setOf("dulo.cx", "fmhy.net")
+        private val TRUSTED_HOST_ALLOWLIST = setOf("dulo.mov")
 
         private const val TV_USER_AGENT =
             "Mozilla/5.0 (Linux; Android 12; Android TV; Dulo TV) " +
@@ -77,7 +74,7 @@ class MainActivity : Activity(), DuloTvJsBridge.PlaybackListener {
         WebView.setWebContentsDebuggingEnabled(BuildConfig.DEBUG)
         setupWebView()
 
-        // Always land on Stream Aggregators (ignore saved WebView URL from software/other sections).
+        // Always start at the dulo.mov home screen (ignore any saved WebView URL).
         binding.webview.loadUrl(HOME_URL)
     }
 
@@ -166,9 +163,14 @@ class MainActivity : Activity(), DuloTvJsBridge.PlaybackListener {
         customViewCallback = null
     }
 
-    /** True once the WebView has actually navigated to the Stream Aggregators section. */
-    private fun isOnStreamAggregatorsHome(): Boolean =
-        binding.webview.url?.contains("stream-aggregators", ignoreCase = true) == true
+    /** True once the WebView is showing dulo.mov's own home page (root path). */
+    private fun isOnHome(): Boolean {
+        val url = binding.webview.url ?: return false
+        val uri = Uri.parse(url)
+        val samehost = uri.host?.equals(Uri.parse(HOME_URL).host, ignoreCase = true) == true
+        val rootPath = uri.path?.trim('/').isNullOrEmpty()
+        return samehost && rootPath
+    }
 
     private fun isTrustedHost(host: String?): Boolean {
         if (host.isNullOrBlank()) return false
@@ -185,25 +187,16 @@ class MainActivity : Activity(), DuloTvJsBridge.PlaybackListener {
         )
 
         if (!isTrustedHost(host)) {
-            Log.d(TAG, "host=$host not trusted; skipping playback/home extras")
+            Log.d(TAG, "host=$host not trusted; skipping playback extras")
             return
         }
 
         injectAsset(webView, "tv_playback.js")
-        injectAsset(webView, "tv_home.js")
-        webView.evaluateJavascript(
-            "setTimeout(function(){ if (window.__duloTvEnsureDefaultSection) window.__duloTvEnsureDefaultSection(); }, 1200);",
-            null
-        )
     }
 
-    private fun goStreamAggregatorsHome() {
-        binding.webview.loadUrl(STREAM_AGGREGATORS_URL)
-        binding.webview.evaluateJavascript(
-            "window.__duloTvGoStreamAggregators && window.__duloTvGoStreamAggregators(true);",
-            null
-        )
-        Toast.makeText(this, "Stream aggregators", Toast.LENGTH_SHORT).show()
+    private fun goHome() {
+        binding.webview.loadUrl(HOME_URL)
+        Toast.makeText(this, "Home", Toast.LENGTH_SHORT).show()
     }
 
     private fun injectAsset(webView: WebView, assetName: String) {
@@ -248,12 +241,12 @@ class MainActivity : Activity(), DuloTvJsBridge.PlaybackListener {
             .setTitle("Dulo TV")
             .setItems(
                 arrayOf(
-                    "Stream aggregators (home)",
+                    "Home",
                     "Playback: subtitles & audio…",
                 )
             ) { dialog, which ->
                 when (which) {
-                    0 -> goStreamAggregatorsHome()
+                    0 -> goHome()
                     1 -> showPlaybackMenu()
                 }
                 dialog.dismiss()
@@ -473,8 +466,8 @@ class MainActivity : Activity(), DuloTvJsBridge.PlaybackListener {
                     Log.d(TAG, "back -> webView.goBack()")
                     binding.webview.goBack()
                 }
-                // Not on the home section yet: one more Back takes the user there...
-                !isOnStreamAggregatorsHome() -> goStreamAggregatorsHome()
+                // Not on the home screen yet: one more Back takes the user there...
+                !isOnHome() -> goHome()
                 // ...and pressing Back again from home actually exits the app.
                 else -> finish()
             }

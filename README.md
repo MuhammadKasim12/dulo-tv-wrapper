@@ -7,7 +7,7 @@
 > [Releases](../../releases) are debug-signed builds intended for personal
 > testing and sideloading, not production/Play Store distribution.
 
-Android TV WebView wrapper app for **https://dulo.cx**.
+Android TV WebView wrapper app for **https://dulo.mov**.
 
 [![Android CI](https://github.com/MuhammadKasim12/dulo-tv-wrapper/actions/workflows/android-ci.yml/badge.svg)](https://github.com/MuhammadKasim12/dulo-tv-wrapper/actions/workflows/android-ci.yml)
 
@@ -45,7 +45,7 @@ real branded artwork before publishing.
 
 ## Notes
 
-- WebView loads `https://dulo.cx` with JavaScript, DOM storage, database
+- WebView loads `https://dulo.mov` with JavaScript, DOM storage, database
   storage, and autoplay media enabled.
 - The Android TV remote **Back** button navigates WebView history before
   exiting the app.
