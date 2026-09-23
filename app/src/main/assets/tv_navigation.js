@@ -6,6 +6,7 @@
   var SKIP_LINK = /^skip\s*(to\s*)?(the\s*)?(main\s*)?(content|navigation|nav)\b/i;
   var TRUSTED_HOSTS = ['dulo.mov'];
   var currentFocus = null;
+  var currentVisualFocusEl = null;
 
   function log(msg) {
     try {
@@ -77,6 +78,8 @@
     };
   }
 
+  var NATURALLY_INTERACTIVE_TAGS = /^(A|BUTTON|INPUT|SELECT|TEXTAREA)$/;
+
   function collectFocusables() {
     var sel =
       'a[href], button, [role="button"], [role="link"], input, select, textarea, [tabindex]';
@@ -86,7 +89,16 @@
       if (el.disabled) return;
       if (el.closest('[inert], [aria-hidden="true"]')) return;
       if (!isVisible(el)) return;
-      if (el.tabIndex === -1 && el.tagName !== 'A' && el.tagName !== 'BUTTON') return;
+      // tabIndex=-1 normally means "skip in spatial nav too" (e.g. our own
+      // prepareTabOrder() stashes every other item's tabindex as -1 while one
+      // is focused) - but real form controls are routinely given tabIndex=-1
+      // by sites that manage focus programmatically (found live: dulo.mov's
+      // search <input> does this) while still being the exact thing the user
+      // needs to reach. Excluding it made moveFocus() unable to find the
+      // input in its own freshly-collected candidate list on the very next
+      // press, falling back to initialFocus() instead of moving - so Up/Down
+      // from the search bar looked like it did nothing at all.
+      if (el.tabIndex === -1 && !NATURALLY_INTERACTIVE_TAGS.test(el.tagName)) return;
       out.push(el);
     });
     return out;
@@ -101,15 +113,35 @@
     });
   }
 
+  // Some real, clickable buttons report a 0x0 getBoundingClientRect (found
+  // live: dulo.mov's header search icon does this) while their visible icon
+  // is actually a differently-sized descendant. Putting the focus ring
+  // (box-shadow + scale) on a 0x0 box renders it as a small square detached
+  // from the icon instead of around it - use the first adequately-sized
+  // descendant for the visual ring in that case, while DOM focus/click
+  // handling still target the real element.
+  function visualTargetFor(el) {
+    var r = el.getBoundingClientRect();
+    if (r.width >= 4 && r.height >= 4) return el;
+    var descendants = el.querySelectorAll('*');
+    for (var i = 0; i < descendants.length; i++) {
+      var dr = descendants[i].getBoundingClientRect();
+      if (dr.width >= 4 && dr.height >= 4) return descendants[i];
+    }
+    return el;
+  }
+
   function setFocus(el, reason) {
     if (!el) return;
     var items = collectFocusables();
     prepareTabOrder(items);
     el.tabIndex = 0;
-    el.setAttribute('data-dulo-tv-focus', '1');
+    if (currentVisualFocusEl) currentVisualFocusEl.removeAttribute('data-dulo-tv-focus');
     items.forEach(function (n) {
       if (n !== el) n.removeAttribute('data-dulo-tv-focus');
     });
+    currentVisualFocusEl = visualTargetFor(el);
+    currentVisualFocusEl.setAttribute('data-dulo-tv-focus', '1');
     try {
       el.focus({ preventScroll: false });
     } catch (e) {
@@ -526,8 +558,21 @@
   //
   // Losing focus (idle-hide, or anything that clears currentFocus) drops
   // back to seek mode automatically.
+  //
+  // Deliberately does NOT skip handling when document.activeElement is
+  // editable (an <input>, e.g.). That guard used to make sense: it let
+  // Left/Right/Enter fall through to the WebView's native handling so a
+  // focused text field's own cursor movement/typing worked normally.
+  // MainActivity no longer has any such native fallback for D-pad keys at
+  // all (see dispatchKeyEvent), so with the guard in place, D-pad became a
+  // complete dead end the instant a text field gained focus: Up/Down/Enter
+  // all silently no-op'd here with no way to navigate off the field or
+  // confirm anything (found live: this is exactly what made dulo.mov's
+  // search box impossible to escape or use with its own on-screen
+  // keyboard). Real typing still works fine via a real keyboard/IME, since
+  // plain character keys were never part of DPAD_KEYS in Kotlin to begin
+  // with and always reach the page directly.
   window.__duloTvHandleKey = function (direction) {
-    if (isEditable(document.activeElement)) return false;
     var dir = String(direction || '').toLowerCase();
 
     if (isTrustedHost() && hasVideo()) {
