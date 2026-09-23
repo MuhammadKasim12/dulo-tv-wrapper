@@ -240,8 +240,94 @@
       }
     });
 
-    if (!best) return true; // nothing further that way; hold position
-    setFocus(best, 'move-' + direction);
+    if (best) {
+      setFocus(best, 'move-' + direction);
+      return true;
+    }
+    // No candidate currently rendered in that direction - the real content
+    // (e.g. a "Channels & Apps" row) may simply be further down the page
+    // than what's laid out in the viewport right now, especially behind a
+    // fixed/sticky bottom bar that has nothing "below" it geometrically even
+    // once new content scrolls into view above it. Scroll and retry instead
+    // of just refusing to move - a TV remote has no scrollbar to fall back on.
+    return scrollAndRetryFocus(direction, active);
+  }
+
+  function isDocumentScroller(node) {
+    return node === document.scrollingElement || node === document.documentElement || node === document.body;
+  }
+
+  function findScrollParent(el, axis) {
+    var node = el ? el.parentElement : null;
+    while (node && node !== document.documentElement) {
+      var style = window.getComputedStyle(node);
+      if (axis === 'y') {
+        var oy = style.overflowY;
+        if ((oy === 'auto' || oy === 'scroll') && node.scrollHeight > node.clientHeight + 1) return node;
+      } else {
+        var ox = style.overflowX;
+        if ((ox === 'auto' || ox === 'scroll') && node.scrollWidth > node.clientWidth + 1) return node;
+      }
+      node = node.parentElement;
+    }
+    return document.scrollingElement || document.documentElement;
+  }
+
+  function getScrollPos(container, axis) {
+    if (isDocumentScroller(container)) return axis === 'y' ? window.scrollY : window.scrollX;
+    return axis === 'y' ? container.scrollTop : container.scrollLeft;
+  }
+
+  function scrollContainerBy(container, axis, delta) {
+    if (isDocumentScroller(container)) {
+      window.scrollBy({ top: axis === 'y' ? delta : 0, left: axis === 'x' ? delta : 0, behavior: 'auto' });
+    } else if (axis === 'y') {
+      container.scrollTop += delta;
+    } else {
+      container.scrollLeft += delta;
+    }
+  }
+
+  function scrollAndRetryFocus(direction, active) {
+    var axis = direction === 'up' || direction === 'down' ? 'y' : 'x';
+    var sign = direction === 'down' || direction === 'right' ? 1 : -1;
+    var container = findScrollParent(active, axis);
+    var before = getScrollPos(container, axis);
+    var step = Math.round((axis === 'y' ? window.innerHeight : window.innerWidth) * 0.6) * sign;
+    scrollContainerBy(container, axis, step);
+
+    setTimeout(function () {
+      var after = getScrollPos(container, axis);
+      if (Math.abs(after - before) < 1) {
+        log('scroll-' + direction + ' had no effect; nothing further that way');
+        return;
+      }
+
+      var items = collectFocusables();
+      if (!items.length) return;
+
+      // Pick whichever now-visible focusable sits nearest the edge we
+      // scrolled toward, rather than insisting on a strict spatial
+      // relationship to the old focus: a fixed/sticky bar (e.g. a bottom tab
+      // dock) has nothing "below" it geometrically even once new content is
+      // revealed above it, so the direction-relative candidate search above
+      // would still find nothing.
+      var edge = direction === 'down' || direction === 'right' ? 0 : (axis === 'y' ? window.innerHeight : window.innerWidth);
+      var best = null;
+      var bestDist = Infinity;
+      items.forEach(function (el) {
+        if (el === active) return;
+        var r = rect(el);
+        var pos = axis === 'y' ? r.top : r.left;
+        var dist = Math.abs(pos - edge);
+        if (dist < bestDist) {
+          bestDist = dist;
+          best = el;
+        }
+      });
+      if (best) setFocus(best, 'scroll-' + direction);
+    }, 220);
+
     return true;
   }
 
@@ -253,6 +339,50 @@
     active.click();
     return true;
   }
+
+  var SEARCH_LABEL = /search/i;
+  var SEARCH_INPUT_SEL =
+    'input[type="search"], input[aria-label*="search" i], input[placeholder*="search" i], [role="searchbox"]';
+
+  function focusSearchInput() {
+    var input = document.querySelector(SEARCH_INPUT_SEL);
+    if (!input || !isVisible(input)) return false;
+    setFocus(input, 'search-input');
+    try {
+      input.focus();
+    } catch (e) { /* ignore */ }
+    return true;
+  }
+
+  // No fixed selector for dulo.mov's search trigger is known ahead of time,
+  // so this looks generically for an input already on the page, then for an
+  // icon/button labeled "search" to reveal one.
+  window.__duloTvOpenSearch = function () {
+    log('open search requested');
+    try {
+      window.scrollTo({ top: 0, left: 0, behavior: 'auto' });
+    } catch (e) { /* ignore */ }
+
+    if (focusSearchInput()) return true;
+
+    var candidates = document.querySelectorAll('button, [role="button"], a, [role="link"]');
+    for (var i = 0; i < candidates.length; i++) {
+      var el = candidates[i];
+      var label = el.getAttribute('aria-label') || el.getAttribute('title') || labelOf(el) || '';
+      if (SEARCH_LABEL.test(label) && isVisible(el)) {
+        try {
+          el.click();
+        } catch (e) {
+          continue;
+        }
+        log('clicked search trigger "' + label + '"');
+        setTimeout(focusSearchInput, 300);
+        return true;
+      }
+    }
+    log('no search control found on page');
+    return false;
+  };
 
   function injectStyles() {
     if (document.getElementById('dulo-tv-nav-style')) return;

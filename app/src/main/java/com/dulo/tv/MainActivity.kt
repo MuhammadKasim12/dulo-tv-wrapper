@@ -86,6 +86,14 @@ class MainActivity : Activity(), DuloTvJsBridge.PlaybackListener {
         }
     }
 
+    /**
+     * Best-effort cache of "is a <video> on the page actually playing right now",
+     * backed by tv_playback.js's playback-state pushes (event-driven on
+     * play/pause, so this is current to within one bridge round-trip - not a
+     * live query, since dispatchKeyEvent can't block on evaluateJavascript).
+     */
+    private fun isVideoActivelyPlaying(): Boolean = lastPlaybackMeta.optBoolean("playing", false)
+
     @SuppressLint("SetJavaScriptEnabled")
     private fun setupWebView() {
         val webView = binding.webview
@@ -217,9 +225,21 @@ class MainActivity : Activity(), DuloTvJsBridge.PlaybackListener {
                     showMainMenu()
                     return true
                 }
+                KeyEvent.KEYCODE_SEARCH -> {
+                    openSearch()
+                    return true
+                }
             }
         }
-        if (customView != null) {
+        if (customView != null || isVideoActivelyPlaying()) {
+            // Let the WebView handle D-pad natively instead of routing it through
+            // our spatial-nav bridge, so the player's own keyboard seek/volume
+            // shortcuts (commonly ArrowLeft/Right/Up/Down) can actually reach the
+            // page. customView covers the true Fullscreen-API case; a custom-
+            // skinned inline player (dulo.mov's own, e.g.) never sets customView
+            // at all, so without this check its seek controls could never receive
+            // a real key event - every press was being converted into "move focus
+            // between buttons" before it ever reached the page.
             return super.dispatchKeyEvent(event)
         }
         if (event.action == KeyEvent.ACTION_DOWN && event.keyCode in DPAD_KEYS) {
@@ -242,17 +262,27 @@ class MainActivity : Activity(), DuloTvJsBridge.PlaybackListener {
             .setItems(
                 arrayOf(
                     "Home",
+                    "Search",
                     "Playback: subtitles & audio…",
                 )
             ) { dialog, which ->
                 when (which) {
                     0 -> goHome()
-                    1 -> showPlaybackMenu()
+                    1 -> openSearch()
+                    2 -> showPlaybackMenu()
                 }
                 dialog.dismiss()
             }
             .setNegativeButton("Close", null)
             .show()
+    }
+
+    /** Finds and opens dulo.mov's own search UI (input or icon trigger). */
+    private fun openSearch() {
+        binding.webview.evaluateJavascript(
+            "window.__duloTvOpenSearch && window.__duloTvOpenSearch();",
+            null
+        )
     }
 
     private fun showPlaybackMenu() {

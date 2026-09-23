@@ -147,6 +147,15 @@
       log('playing');
       syncState();
     });
+    // Event-driven pause sync matters: MainActivity's dispatchKeyEvent uses
+    // state.playing to decide whether to hand D-pad to the WebView natively
+    // (for the player's own seek/volume shortcuts) or to our spatial-nav
+    // bridge - without this, that decision could lag up to one poll interval
+    // (2.5s) behind an actual pause.
+    v.addEventListener('pause', function () {
+      log('paused');
+      syncState();
+    });
     v.addEventListener('loadedmetadata', syncState);
   }
 
