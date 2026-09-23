@@ -3,6 +3,7 @@ package com.dulo.tv
 import android.annotation.SuppressLint
 import android.app.Activity
 import android.os.Bundle
+import android.util.Log
 import android.view.KeyEvent
 import android.view.View
 import android.webkit.WebChromeClient
@@ -15,13 +16,9 @@ import com.dulo.tv.databinding.ActivityMainBinding
 /**
  * Single-activity Android TV WebView wrapper for https://dulo.cx.
  *
- * - Fullscreen, no title bar (see Theme.DuloTV).
- * - JavaScript / DOM storage / database storage enabled.
- * - Autoplay media without requiring a user gesture.
- * - TV-friendly User-Agent string.
- * - Remote D-pad "Back" navigates WebView history before exiting the app.
- * - HTML5 fullscreen <video> is supported via WebChromeClient custom view
- *   handling (common for TV-oriented sites with video content).
+ * Injects [tv_navigation.js] to keep top nav (Home / Movies / TV Series / Settings)
+ * from stealing D-pad focus while browsing rows, auto-expands "See all" rows, and
+ * logs navigation to Logcat tag [DuloTvNav].
  */
 class MainActivity : Activity() {
 
@@ -31,13 +28,22 @@ class MainActivity : Activity() {
     private var customViewCallback: WebChromeClient.CustomViewCallback? = null
 
     companion object {
+        private const val TAG = "DuloTvNav"
         private const val TARGET_URL = "https://dulo.cx"
 
-        // TV-friendly User-Agent: identifies as an Android TV device so sites
-        // that serve TV-optimized layouts / player controls respond correctly.
         private const val TV_USER_AGENT =
             "Mozilla/5.0 (Linux; Android 12; Android TV; Dulo TV) " +
                 "AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 TV Safari/537.36"
+
+        private val DPAD_KEYS = setOf(
+            KeyEvent.KEYCODE_DPAD_UP,
+            KeyEvent.KEYCODE_DPAD_DOWN,
+            KeyEvent.KEYCODE_DPAD_LEFT,
+            KeyEvent.KEYCODE_DPAD_RIGHT,
+            KeyEvent.KEYCODE_DPAD_CENTER,
+            KeyEvent.KEYCODE_ENTER,
+            KeyEvent.KEYCODE_BACK,
+        )
     }
 
     @SuppressLint("SetJavaScriptEnabled")
@@ -60,20 +66,12 @@ class MainActivity : Activity() {
         val webView = binding.webview
         val settings = webView.settings
 
-        // Core content settings.
         settings.javaScriptEnabled = true
         settings.domStorageEnabled = true
         @Suppress("DEPRECATION")
         settings.databaseEnabled = true
-
-        // Allow media (audio/video) to autoplay without a prior user gesture -
-        // important for TV remotes, which have no "click to play" concept.
         settings.mediaPlaybackRequiresUserGesture = false
-
-        // Identify as an Android TV browser.
         settings.userAgentString = TV_USER_AGENT
-
-        // Sensible defaults for a TV-oriented, remote-navigated WebView.
         settings.loadWithOverviewMode = true
         settings.useWideViewPort = true
         settings.cacheMode = WebSettings.LOAD_DEFAULT
@@ -84,21 +82,25 @@ class MainActivity : Activity() {
         settings.allowContentAccess = false
         settings.mixedContentMode = WebSettings.MIXED_CONTENT_COMPATIBILITY_MODE
 
-        // Ensure the WebView can receive D-pad focus/key events (no touchscreen
-        // is required on Android TV).
         webView.isFocusable = true
         webView.isFocusableInTouchMode = true
         webView.requestFocus()
 
-        // Keep all navigation inside the WebView instead of handing off to an
-        // external browser/app.
+        webView.addJavascriptInterface(DuloTvJsBridge(), "DuloTvBridge")
+
         webView.webViewClient = object : WebViewClient() {
             override fun shouldOverrideUrlLoading(view: WebView?, url: String?): Boolean {
+                Log.d(TAG, "navigate url=$url")
                 return false
+            }
+
+            override fun onPageFinished(view: WebView?, url: String?) {
+                super.onPageFinished(view, url)
+                Log.d(TAG, "page finished url=$url")
+                view?.let { injectTvNavigation(it) }
             }
         }
 
-        // Support HTML5 fullscreen <video> playback (common on TV/video sites).
         webView.webChromeClient = object : WebChromeClient() {
             override fun onShowCustomView(view: View?, callback: CustomViewCallback?) {
                 if (customView != null) {
@@ -129,12 +131,35 @@ class MainActivity : Activity() {
         }
     }
 
-    /**
-     * Android TV remote "Back" button: navigate WebView history first, and
-     * only let the system close/exit the app once there is no more history.
-     */
+    private fun injectTvNavigation(webView: WebView) {
+        try {
+            val script = assets.open("tv_navigation.js").bufferedReader().use { it.readText() }
+            webView.evaluateJavascript(script) { result ->
+                Log.d(TAG, "injected tv_navigation.js result=$result")
+            }
+            webView.evaluateJavascript(
+                "if (window.__duloTvNavRefresh) window.__duloTvNavRefresh();",
+                null
+            )
+        } catch (e: Exception) {
+            Log.e(TAG, "failed to inject tv_navigation.js", e)
+        }
+    }
+
+    override fun dispatchKeyEvent(event: KeyEvent): Boolean {
+        if (event.action == KeyEvent.ACTION_DOWN && event.keyCode in DPAD_KEYS) {
+            Log.d(
+                TAG,
+                "key down code=${event.keyCode} (${KeyEvent.keyCodeToString(event.keyCode)}) " +
+                    "repeat=${event.repeatCount}"
+            )
+        }
+        return super.dispatchKeyEvent(event)
+    }
+
     override fun onKeyDown(keyCode: Int, event: KeyEvent?): Boolean {
         if (keyCode == KeyEvent.KEYCODE_BACK && binding.webview.canGoBack()) {
+            Log.d(TAG, "back -> webView.goBack()")
             binding.webview.goBack()
             return true
         }
