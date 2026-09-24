@@ -578,6 +578,16 @@
     // hidden, wrongly keeping Left/Right/Enter in button-navigation mode
     // instead of falling back to direct seek/play-pause.
     if (overlay.contains(currentFocus)) currentFocus = null;
+    // currentVisualFocusEl drives the fixed ring overlay independently of
+    // currentFocus/DOM focus - clearing only currentFocus above left the
+    // ring rendered at the last-focused button's on-screen position even
+    // after that button went invisible (opacity: 0 doesn't remove it from
+    // the DOM or collapse its rect), showing as a stray empty rectangle
+    // that outlived the controls it was supposed to be highlighting.
+    if (overlay.contains(currentVisualFocusEl)) {
+      currentVisualFocusEl = null;
+      syncFocusRing();
+    }
     overlay.style.opacity = '0';
     overlay.style.pointerEvents = 'none';
   }
