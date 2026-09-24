@@ -2,6 +2,25 @@
   var firstInstall = !window.__duloTvNavInstalled;
   if (firstInstall) window.__duloTvNavInstalled = true;
 
+  // MainActivity re-injects this asset on every real navigation (Home,
+  // Search's retry-after-goHome, etc.), but on an SPA the document itself
+  // often never actually reloads between those navigations - so a second
+  // injection ran this whole IIFE again in the *same* still-alive DOM.
+  // Each run has its own closure-scoped state (currentFocus, focusRingEl,
+  // ...) and ensureFocusRingEl() only checked its own local variable before
+  // creating a new ring element - never document.getElementById - so every
+  // extra injection left its own permanent, independently-positioned
+  // #dulo-tv-focus-ring div behind (confirmed live: three simultaneous ring
+  // rectangles on screen from three stacked injections), plus a whole
+  // second/third set of keydown listeners still processing every press.
+  // Skip re-running entirely on any injection after the first; the already-
+  // exposed window.__duloTvNavRefresh from that first run is enough to
+  // re-sync focus for the new page state.
+  if (!firstInstall) {
+    if (window.__duloTvNavRefresh) window.__duloTvNavRefresh(true);
+    return;
+  }
+
   var SEE_ALL = /see\s*all|view\s*all|show\s*all|\bmore\b/i;
   var SKIP_LINK = /^skip\s*(to\s*)?(the\s*)?(main\s*)?(content|navigation|nav)\b/i;
   var TRUSTED_HOSTS = ['dulo.mov'];
