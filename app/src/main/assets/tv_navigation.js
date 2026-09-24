@@ -45,7 +45,16 @@
       'position: fixed;' +
       'pointer-events: none;' +
       'z-index: 2147483647;' +
-      'box-shadow: 0 0 0 4px #fff, 0 8px 28px rgba(0,0,0,0.55);' +
+      // Embossed/beveled highlight instead of a flat outline ring: a light
+      // inset edge on the top-left (simulated light source) and a dark inset
+      // edge on the bottom-right give a raised, pressed-metal look; a hairline
+      // outer edge keeps it visible against any background, and a soft drop
+      // shadow lifts it off the page slightly.
+      'box-shadow:' +
+      'inset 2px 2px 2px rgba(255,255,255,0.5),' +
+      'inset -2px -2px 2px rgba(0,0,0,0.6),' +
+      '0 0 0 1px rgba(255,255,255,0.25),' +
+      '0 6px 18px rgba(0,0,0,0.4);' +
       'border-radius: 8px;' +
       'transition: top 0.15s ease-out, left 0.15s ease-out, width 0.15s ease-out,' +
       'height 0.15s ease-out, opacity 0.15s ease-out;' +
@@ -286,12 +295,33 @@
   // breaks down as soon as a sidebar column and the main content share
   // similar Y positions (it was clustering them into the same "row" and
   // trapping focus in the header/sidebar).
+  // Require some alignment on the perpendicular axis, not just "anywhere in
+  // that general direction" - confirmed live: with no such check, pressing
+  // Right from the last button of a search-result card (top ~504) could jump
+  // clean across the page to the header's "Clear search" button (top ~97),
+  // since it's technically "to the right" with nothing better competing, and
+  // isCandidate() alone had no vertical constraint to rule it out. Allow
+  // direct overlap, or otherwise cap the perpendicular gap to a small
+  // multiple of the elements' own size (a "close enough to the same row/
+  // column" band) so a stray element far off in the other axis is rejected
+  // as a candidate entirely instead of merely being scored lower.
+  function perpendicularAligned(r0, r, axis) {
+    var start0 = axis === 'y' ? r0.top : r0.left;
+    var end0 = axis === 'y' ? r0.bottom : r0.right;
+    var start1 = axis === 'y' ? r.top : r.left;
+    var end1 = axis === 'y' ? r.bottom : r.right;
+    if (Math.min(end0, end1) - Math.max(start0, start1) > 0) return true; // overlap
+    var gap = start1 > end0 ? start1 - end0 : start0 - end1;
+    var size = axis === 'y' ? Math.max(r0.height, r.height) : Math.max(r0.width, r.width);
+    return gap < size * 2;
+  }
+
   function isCandidate(r0, r, direction) {
     switch (direction) {
-      case 'left': return r.right <= r0.left + 1;
-      case 'right': return r.left >= r0.right - 1;
-      case 'up': return r.bottom <= r0.top + 1;
-      case 'down': return r.top >= r0.bottom - 1;
+      case 'left': return r.right <= r0.left + 1 && perpendicularAligned(r0, r, 'y');
+      case 'right': return r.left >= r0.right - 1 && perpendicularAligned(r0, r, 'y');
+      case 'up': return r.bottom <= r0.top + 1 && perpendicularAligned(r0, r, 'x');
+      case 'down': return r.top >= r0.bottom - 1 && perpendicularAligned(r0, r, 'x');
       default: return false;
     }
   }
@@ -519,6 +549,15 @@
     s.textContent =
       'button[aria-label="Fullscreen"], button[aria-label="Picture in picture"] {' +
       'display: none !important;' +
+      '}' +
+      // The player's own class sets object-fit: fill, which stretches the
+      // frame non-uniformly to fill a 16:9 box regardless of the source's
+      // real aspect ratio - confirmed live: a 3840x1588 (~2.42:1 cinemascope)
+      // source squeezed into a 960x540 (16:9) box, visibly distorting the
+      // picture. "contain" scales it uniformly and letterboxes instead,
+      // which is the correct behavior for wider-than-16:9 sources.
+      'video.object-fill, video[class*="object-fill"] {' +
+      'object-fit: contain !important;' +
       '}';
     document.head.appendChild(s);
   }
