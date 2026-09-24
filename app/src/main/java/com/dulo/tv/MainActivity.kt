@@ -33,6 +33,7 @@ class MainActivity : Activity(), DuloTvJsBridge.PlaybackListener {
     private var customViewCallback: WebChromeClient.CustomViewCallback? = null
 
     private var lastPlaybackMeta = JSONObject()
+    private var jsBridgeAttached = false
 
     companion object {
         private const val TAG = "DuloTvNav"
@@ -113,8 +114,6 @@ class MainActivity : Activity(), DuloTvJsBridge.PlaybackListener {
         webView.isFocusableInTouchMode = true
         webView.requestFocus()
 
-        webView.addJavascriptInterface(DuloTvJsBridge(this), "DuloTvBridge")
-
         webView.webViewClient = object : WebViewClient() {
             override fun shouldOverrideUrlLoading(view: WebView?, url: String?): Boolean {
                 Log.d(TAG, "navigate url=$url")
@@ -180,6 +179,24 @@ class MainActivity : Activity(), DuloTvJsBridge.PlaybackListener {
         return TRUSTED_HOST_ALLOWLIST.any { h == it || h.endsWith(".$it") }
     }
 
+    /**
+     * DuloTvBridge exposes onPlaybackMeta/log to whatever page currently holds
+     * the WebView. Attaching it once at setup meant any third-party site reached
+     * via a link could call it too - narrow, since only those two methods exist
+     * today, but a loaded gun for the next one added. Attach/detach it per page
+     * load instead, gated on the same trusted-host allowlist as tv_playback.js.
+     */
+    private fun updateJsBridge(webView: WebView, host: String?) {
+        val trusted = isTrustedHost(host)
+        if (trusted && !jsBridgeAttached) {
+            webView.addJavascriptInterface(DuloTvJsBridge(this), "DuloTvBridge")
+            jsBridgeAttached = true
+        } else if (!trusted && jsBridgeAttached) {
+            webView.removeJavascriptInterface("DuloTvBridge")
+            jsBridgeAttached = false
+        }
+    }
+
     private fun injectScripts(webView: WebView, host: String?) {
         // Spatial D-pad navigation is generic/non-destructive - safe on any site.
         injectAsset(webView, "tv_navigation.js")
@@ -187,6 +204,8 @@ class MainActivity : Activity(), DuloTvJsBridge.PlaybackListener {
             "if (window.__duloTvNavRefresh) window.__duloTvNavRefresh();",
             null
         )
+
+        updateJsBridge(webView, host)
 
         if (!isTrustedHost(host)) {
             Log.d(TAG, "host=$host not trusted; skipping playback extras")
@@ -464,6 +483,10 @@ class MainActivity : Activity(), DuloTvJsBridge.PlaybackListener {
             val client = OpenSubtitlesClient(apiKey)
             val results = client.search(query, langs)
             runOnUiThread {
+                // The activity may have been backed out of / destroyed while this
+                // background search was in flight - AlertDialog.Builder(this).show()
+                // against a dead window throws WindowManager.BadTokenException.
+                if (isFinishing || isDestroyed) return@runOnUiThread
                 if (results.isEmpty()) {
                     Toast.makeText(this, "No subtitles found for \"$query\"", Toast.LENGTH_LONG).show()
                     return@runOnUiThread
@@ -483,9 +506,12 @@ class MainActivity : Activity(), DuloTvJsBridge.PlaybackListener {
         Toast.makeText(this, "Downloading…", Toast.LENGTH_SHORT).show()
         Thread {
             val srt = client.downloadSubtitle(result.downloadPath)
+            if (isFinishing || isDestroyed) return@Thread
             if (srt.isNullOrBlank()) {
                 runOnUiThread {
-                    Toast.makeText(this, "Subtitle download failed", Toast.LENGTH_LONG).show()
+                    if (!isFinishing && !isDestroyed) {
+                        Toast.makeText(this, "Subtitle download failed", Toast.LENGTH_LONG).show()
+                    }
                 }
                 return@Thread
             }
@@ -494,6 +520,7 @@ class MainActivity : Activity(), DuloTvJsBridge.PlaybackListener {
             // anything outside ASCII, which breaks hi/ta/te/etc. subtitles).
             val b64 = Base64.encodeToString(vtt.toByteArray(Charsets.UTF_8), Base64.NO_WRAP)
             runOnUiThread {
+                if (isFinishing || isDestroyed) return@runOnUiThread
                 binding.webview.evaluateJavascript(
                     "window.__duloTvApplySubtitle(${JSONObject.quote(b64)}, " +
                         "${JSONObject.quote(result.language)});",

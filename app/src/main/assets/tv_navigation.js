@@ -7,6 +7,47 @@
   var TRUSTED_HOSTS = ['dulo.mov'];
   var currentFocus = null;
   var currentVisualFocusEl = null;
+  var focusRingEl = null;
+
+  // A body-level, position:fixed overlay for the focus ring, positioned via
+  // getBoundingClientRect() to match the real focused element - NOT styled
+  // in-place on the element itself. Found live: a card's own z-index (even
+  // set to the max possible value) stayed invisible behind the site's fixed
+  // bottom nav dock, because an intermediate ancestor (<main>, here) creates
+  // its own stacking context (position:relative + z-index:10) that traps
+  // every descendant z-index inside it - no value escapes to compete with a
+  // sibling fixed element outside that stacking context. A fixed overlay
+  // appended directly to <html> has no such ancestor, so it always wins.
+  function ensureFocusRingEl() {
+    if (focusRingEl && document.documentElement.contains(focusRingEl)) return focusRingEl;
+    focusRingEl = document.createElement('div');
+    focusRingEl.id = 'dulo-tv-focus-ring';
+    focusRingEl.style.cssText =
+      'position: fixed;' +
+      'pointer-events: none;' +
+      'z-index: 2147483647;' +
+      'box-shadow: 0 0 0 4px #fff, 0 8px 28px rgba(0,0,0,0.55);' +
+      'border-radius: 8px;' +
+      'transition: top 0.15s ease-out, left 0.15s ease-out, width 0.15s ease-out,' +
+      'height 0.15s ease-out, opacity 0.15s ease-out;' +
+      'opacity: 0;';
+    document.documentElement.appendChild(focusRingEl);
+    return focusRingEl;
+  }
+
+  function syncFocusRing() {
+    var ring = ensureFocusRingEl();
+    if (!currentVisualFocusEl || !document.body.contains(currentVisualFocusEl)) {
+      ring.style.opacity = '0';
+      return;
+    }
+    var r = currentVisualFocusEl.getBoundingClientRect();
+    ring.style.opacity = '1';
+    ring.style.top = r.top + 'px';
+    ring.style.left = r.left + 'px';
+    ring.style.width = r.width + 'px';
+    ring.style.height = r.height + 'px';
+  }
 
   function log(msg) {
     try {
@@ -136,12 +177,7 @@
     var items = collectFocusables();
     prepareTabOrder(items);
     el.tabIndex = 0;
-    if (currentVisualFocusEl) currentVisualFocusEl.removeAttribute('data-dulo-tv-focus');
-    items.forEach(function (n) {
-      if (n !== el) n.removeAttribute('data-dulo-tv-focus');
-    });
     currentVisualFocusEl = visualTargetFor(el);
-    currentVisualFocusEl.setAttribute('data-dulo-tv-focus', '1');
     try {
       el.focus({ preventScroll: false });
     } catch (e) {
@@ -151,6 +187,11 @@
     }
     currentFocus = el;
     scrollFocusedIntoView(el);
+    // Sync after scrollIntoView so the ring reflects the post-scroll
+    // position, plus once more next frame in case the scroll (or the site's
+    // own layout reaction to a focus/click event) settles a frame later.
+    syncFocusRing();
+    requestAnimationFrame(syncFocusRing);
     log('focus [' + reason + '] "' + labelOf(el) + '"');
     maybeExpandRow(el);
   }
@@ -429,22 +470,20 @@
     return false;
   };
 
+  // The visual ring itself is drawn by the fixed, body-level overlay
+  // (syncFocusRing/ensureFocusRingEl) instead of an in-place style, since an
+  // in-place z-index can be trapped by an ancestor's own stacking context
+  // (found live: a card inside dulo.mov's <main>, which sets its own
+  // position:relative + z-index:10, stayed behind the site's fixed bottom
+  // nav dock no matter how high its own z-index went). Just suppress the
+  // native focus outline here, so it doesn't show in addition to our ring.
   function injectStyles() {
     if (document.getElementById('dulo-tv-nav-style')) return;
     var s = document.createElement('style');
     s.id = 'dulo-tv-nav-style';
     s.textContent =
-      '[data-dulo-tv-focus="1"] {' +
+      'a:focus, button:focus, [role="button"]:focus, [tabindex]:focus {' +
       'outline: none !important;' +
-      'transform: scale(1.1) !important;' +
-      'transform-origin: center center !important;' +
-      'z-index: 50 !important;' +
-      'position: relative !important;' +
-      'box-shadow: 0 0 0 4px #fff, 0 8px 28px rgba(0,0,0,0.55) !important;' +
-      'transition: transform 0.15s ease-out, box-shadow 0.15s ease-out !important;' +
-      '}' +
-      'a, button, [role="button"], [tabindex] {' +
-      'transition: transform 0.15s ease-out, box-shadow 0.15s ease-out;' +
       '}';
     document.head.appendChild(s);
   }
@@ -643,6 +682,12 @@
 
   document.addEventListener('keydown', onKeyDown, true);
   injectStyles();
+
+  // Keep the fixed focus-ring overlay tracking its target through any
+  // scrolling (capture:true so this also fires for scrolls on an inner
+  // scrollable container, not just the document) or layout/viewport change.
+  window.addEventListener('scroll', syncFocusRing, true);
+  window.addEventListener('resize', syncFocusRing);
 
   if (isTrustedHost()) {
     injectDuloPlayerStyles();
