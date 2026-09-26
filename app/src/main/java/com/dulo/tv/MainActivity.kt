@@ -566,21 +566,45 @@ class MainActivity : Activity(), DuloTvJsBridge.PlaybackListener {
 
     override fun onKeyDown(keyCode: Int, event: KeyEvent?): Boolean {
         if (keyCode == KeyEvent.KEYCODE_BACK) {
-            when {
-                // Leave fullscreen video first rather than navigating underneath it.
-                customView != null -> exitFullscreen()
-                binding.webview.canGoBack() -> {
-                    Log.d(TAG, "back -> webView.goBack()")
-                    binding.webview.goBack()
+            // BACK was previously handled purely as WebView-history/Home
+            // navigation, with zero awareness of in-page overlay state (the
+            // site's own Subtitles/Settings panels, e.g.) - so closing one of
+            // those fell through straight to goBack()/goHome() instead of
+            // just dismissing the panel, landing on "some irrelevant page"
+            // instead of the still-playing video underneath. Ask the page
+            // first whether it just closed something itself; only fall back
+            // to native navigation if it says there was nothing to close.
+            // evaluateJavascript is async, so the key press is consumed
+            // immediately and the actual decision happens in the callback.
+            if (customView == null) {
+                binding.webview.evaluateJavascript(
+                    "(window.__duloTvHandleBack ? window.__duloTvHandleBack() : false);"
+                ) { result ->
+                    if (result != "true") {
+                        runOnUiThread { performNativeBack() }
+                    }
                 }
-                // Not on the home screen yet: one more Back takes the user there...
-                !isOnHome() -> goHome()
-                // ...and pressing Back again from home actually exits the app.
-                else -> finish()
+                return true
             }
+            performNativeBack()
             return true
         }
         return super.onKeyDown(keyCode, event)
+    }
+
+    private fun performNativeBack() {
+        when {
+            // Leave fullscreen video first rather than navigating underneath it.
+            customView != null -> exitFullscreen()
+            binding.webview.canGoBack() -> {
+                Log.d(TAG, "back -> webView.goBack()")
+                binding.webview.goBack()
+            }
+            // Not on the home screen yet: one more Back takes the user there...
+            !isOnHome() -> goHome()
+            // ...and pressing Back again from home actually exits the app.
+            else -> finish()
+        }
     }
 
     override fun onSaveInstanceState(outState: Bundle) {

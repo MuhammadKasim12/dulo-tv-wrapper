@@ -648,6 +648,34 @@
     return !currentFocus || !document.body.contains(currentFocus) || !isVisible(currentFocus);
   }
 
+  // Called from MainActivity's onKeyDown BEFORE any WebView-history/Home
+  // navigation, so a "layer" the page itself opened (dulo.mov's own
+  // Subtitles/Settings panel, e.g.) gets closed in place instead of Back
+  // falling straight through to goBack()/goHome() and landing on an
+  // unrelated screen while the video was still playing underneath.
+  window.__duloTvHandleBack = function () {
+    // dulo.mov's markup (aria-labels, focus-visible rings, Tailwind utility
+    // classes) matches the conventions of modern accessible component
+    // libraries (Radix UI / Headless UI / shadcn-style), which universally
+    // close an open dialog/menu on Escape - dispatching one closes whatever
+    // panel is open without us needing to know its specific markup or add a
+    // new special case per panel.
+    var hasDialog = document.querySelector('[role="dialog"], [aria-modal="true"]') !== null;
+    if (hasDialog) {
+      document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', code: 'Escape', bubbles: true, cancelable: true }));
+      return true;
+    }
+    // Not a real "screen" to navigate away from either - just step back out
+    // of button-browsing mode on the player controls (see
+    // __duloTvHandleKey below) to plain seek mode.
+    if (isTrustedHost() && isBrowsingControls()) {
+      if (document.activeElement) document.activeElement.blur();
+      currentFocus = null;
+      return true;
+    }
+    return false;
+  };
+
   // Kodi-style playback controls with two modes, distinguished by whether
   // focus is currently sitting on a button inside the controls overlay:
   //
