@@ -53,6 +53,9 @@ class MainActivity : Activity(), DuloTvJsBridge.PlaybackListener {
          */
         private val TRUSTED_HOST_ALLOWLIST = setOf("dulo.sx", "dulo.mov")
 
+        /** OS auto-repeat events before a held Up/Down counts as "hold" (~0.5 s). */
+        private const val HOLD_REPEATS = 8
+
         private val SPEED_OPTIONS = listOf(0.5, 0.75, 1.0, 1.25, 1.5, 2.0)
 
         private const val TV_USER_AGENT =
@@ -304,6 +307,11 @@ class MainActivity : Activity(), DuloTvJsBridge.PlaybackListener {
                 // forward genuinely new presses; silently ignore repeat echoes.
                 if (event.repeatCount == 0) {
                     forwardDpadToPage(direction, event)
+                } else if (event.repeatCount == HOLD_REPEATS && (direction == "up" || direction == "down")) {
+                    // Held Up/Down: jump to the page's top/bottom bar (once per hold).
+                    binding.webview.evaluateJavascript(
+                        "window.__duloTvJumpChrome && window.__duloTvJumpChrome('$direction');", null
+                    )
                 }
                 return true
             }

@@ -986,6 +986,24 @@
     return false;
   };
 
+  // Hold Up / hold Down on the remote (MainActivity): jump straight to the
+  // page's top bar (menu, search) or bottom bar (Home/Movies/Live/...), which
+  // row-by-row navigation only reaches at the very top/bottom of a long page.
+  window.__duloTvJumpChrome = function (direction) {
+    var down = direction === 'down';
+    var cx = currentFocus ? rect(currentFocus).cx : window.innerWidth / 2;
+    var best = null, bestD = Infinity;
+    collectFocusables().forEach(function (el) {
+      if (!isChrome(el) || isSkipLink(el)) return;
+      var r = rect(el);
+      if (down ? r.top < window.innerHeight * 0.6 : r.bottom > window.innerHeight * 0.3) return;
+      var d = Math.abs(r.cx - cx);
+      if (d < bestD) { bestD = d; best = el; }
+    });
+    if (best) setFocus(best, 'jump-' + direction);
+    return !!best;
+  };
+
   // force=true re-picks initial focus even if the current focus is still
   // valid - used after a same-page section change (e.g. jumping to Stream
   // Aggregators) so focus actually follows the content into view instead of
