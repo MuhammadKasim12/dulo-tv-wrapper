@@ -23,7 +23,7 @@
 
   var SEE_ALL = /see\s*all|view\s*all|show\s*all|\bmore\b/i;
   var SKIP_LINK = /^skip\s*(to\s*)?(the\s*)?(main\s*)?(content|navigation|nav)\b/i;
-  var TRUSTED_HOSTS = ['dulo.mov'];
+  var TRUSTED_HOSTS = ['dulo.sx', 'dulo.mov'];
   var currentFocus = null;
   var currentVisualFocusEl = null;
   var focusRingEl = null;
