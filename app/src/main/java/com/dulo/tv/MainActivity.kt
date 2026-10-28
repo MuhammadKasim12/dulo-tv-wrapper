@@ -365,6 +365,7 @@ class MainActivity : Activity(), DuloTvJsBridge.PlaybackListener {
             }
             .setNegativeButton("Close", null)
             .show()
+            .also { wrapListNavigation(it) }
     }
 
     /** Finds and opens dulo.mov's own search UI (input or icon trigger). */
@@ -482,6 +483,25 @@ class MainActivity : Activity(), DuloTvJsBridge.PlaybackListener {
             }
             .setNegativeButton("Close", null)
             .show()
+            .also { wrapListNavigation(it) }
+    }
+
+    /** Up on the first entry goes to the last, Down on the last back to the first. */
+    private fun wrapListNavigation(dialog: AlertDialog) {
+        val list = dialog.listView ?: return
+        list.setOnKeyListener { _, keyCode, event ->
+            if (event.action != KeyEvent.ACTION_DOWN) return@setOnKeyListener false
+            val last = list.count - 1
+            when {
+                keyCode == KeyEvent.KEYCODE_DPAD_UP && list.selectedItemPosition == 0 -> {
+                    list.setSelection(last); true
+                }
+                keyCode == KeyEvent.KEYCODE_DPAD_DOWN && list.selectedItemPosition == last -> {
+                    list.setSelection(0); true
+                }
+                else -> false
+            }
+        }
     }
 
     private fun selectTextTrack(index: Int) {

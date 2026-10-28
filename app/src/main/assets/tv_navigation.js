@@ -137,7 +137,13 @@
     if (r.bottom < -slack || r.top > window.innerHeight + slack) return false;
     if (offscreenY && (r.right <= 0 || r.left >= window.innerWidth)) return false;
     var st = window.getComputedStyle(el);
-    if (st.visibility === 'hidden' || st.display === 'none' || st.opacity === '0') return false;
+    if (st.visibility === 'hidden' || st.display === 'none') return false;
+    // Opacity is only judged on screen: dulo.mov's lower rows (Continue
+    // Watching etc.) sit at opacity 0 until scrolled into view (fade-in), and
+    // judging them off screen made Down unable to reach them at all (found live).
+    var onScreen = r.bottom > 0 && r.top < window.innerHeight;
+    if (!onScreen) return true;
+    if (st.opacity === '0') return false;
     // A faded-out ancestor (auto-hidden player controls, closed menus) or
     // something drawn on top (an embedded player covering the page's own
     // buttons) also makes it invisible - focusing those left the ring as an
@@ -152,16 +158,23 @@
     var cx = (vl + vr) / 2, cy = (vt + vb) / 2;
     if (vr - vl >= 1 && vb - vt >= 1 && el.tagName !== 'IFRAME') {
       var top = document.elementFromPoint(cx, cy);
-      if (top && top !== el && !el.contains(top) && !top.contains(el) && coversWithPlayer(top)) return false;
+      if (top && top !== el && !el.contains(top) && !top.contains(el) && coversWithPlayer(top, cx, cy)) return false;
     }
     return true;
   }
 
-  // The element on top belongs to a video player (the frame/video itself or a
-  // wrapper a few levels up that holds one) - i.e. a player is drawn over it.
-  function coversWithPlayer(top) {
-    for (var n = top, i = 0; n && n !== document.body && i < 5; n = n.parentElement, i++) {
-      if (n.tagName === 'IFRAME' || n.tagName === 'VIDEO' || n.querySelector('iframe, video')) return true;
+  // The thing drawn on top at that point is a video player: the frame/video
+  // itself, or a wrapper whose own player frame/video covers that point.
+  // Not "any ancestor holds a video" - found live: dulo.mov's home has a
+  // trailer <video> in its hero, and that rule wrongly hid every card on the
+  // page that shared a section with it (Continue Watching became unreachable).
+  function coversWithPlayer(top, x, y) {
+    if (top.tagName === 'IFRAME') return isPlayerFrame(top);
+    var players = top.querySelectorAll('iframe');
+    for (var i = 0; i < players.length; i++) {
+      if (!isPlayerFrame(players[i])) continue;
+      var r = players[i].getBoundingClientRect();
+      if (x >= r.left && x <= r.right && y >= r.top && y <= r.bottom && r.width * r.height > 40000) return true;
     }
     return false;
   }
@@ -230,9 +243,17 @@
   // into, so remote keys never got to it. It's focusable here; Enter on it
   // asks MainActivity for a native tap at its center, and from then on
   // MainActivity hands D-pad to the WebView natively until Back.
+  // Only a real movie player counts: not a YouTube trailer (dulo.mov's home
+  // hero plays one in the background - found live, it swallowed Left/Right),
+  // and shown in a fixed layer over the page (dulo.site's player dialog).
   function isPlayerFrame(el) {
     var r = el.getBoundingClientRect();
-    return r.width >= 300 && r.height >= 150;
+    if (r.width < 300 || r.height < 150) return false;
+    if (/youtube(-nocookie)?\.com/.test(el.src || '')) return false;
+    for (var n = el; n && n !== document.documentElement; n = n.parentElement) {
+      if (window.getComputedStyle(n).position === 'fixed') return true;
+    }
+    return false;
   }
 
   function biggestPlayerFrame(items) {
@@ -250,7 +271,7 @@
   // frame around, which swallowed the relayed keys).
   function fullscreenPlayerFrame() {
     var top = document.elementFromPoint(window.innerWidth / 2, window.innerHeight / 2);
-    if (!top || top.tagName !== 'IFRAME') return null;
+    if (!top || top.tagName !== 'IFRAME' || !isPlayerFrame(top)) return null;
     var r = top.getBoundingClientRect();
     return r.width * r.height > window.innerWidth * window.innerHeight * 0.6 ? top : null;
   }
@@ -303,7 +324,9 @@
     syncFocusRing();
     requestAnimationFrame(syncFocusRing);
     log('focus [' + reason + '] "' + labelOf(el) + '"');
-    maybeExpandRow(el);
+    // maybeExpandRow (auto-clicking a row's "See all") is off: its /more/
+    // match also hit "More Like This" / "More Info" and navigated away on its
+    // own while the user was only moving focus (found live).
   }
 
   function findSeeAll(scope) {
