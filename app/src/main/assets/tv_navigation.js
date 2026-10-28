@@ -84,6 +84,10 @@
       ring.style.opacity = '0';
       return;
     }
+    if (!isVisible(currentFocus || currentVisualFocusEl)) {
+      ring.style.opacity = '0';
+      return;
+    }
     var r = currentVisualFocusEl.getBoundingClientRect();
     ring.style.opacity = '1';
     ring.style.top = r.top + 'px';
@@ -134,7 +138,32 @@
     if (offscreenY && (r.right <= 0 || r.left >= window.innerWidth)) return false;
     var st = window.getComputedStyle(el);
     if (st.visibility === 'hidden' || st.display === 'none' || st.opacity === '0') return false;
+    // A faded-out ancestor (auto-hidden player controls, closed menus) or
+    // something drawn on top (an embedded player covering the page's own
+    // buttons) also makes it invisible - focusing those left the ring as an
+    // empty embossed rectangle in the middle of nowhere.
+    for (var a = el.parentElement; a && a !== document.body; a = a.parentElement) {
+      if (window.getComputedStyle(a).opacity === '0') return false;
+    }
+    // Sample the middle of the on-screen part (found live: dulo.site's Play
+    // button ended up half below the edge, under the playing video).
+    var vl = Math.max(r.left, 0), vr = Math.min(r.right, window.innerWidth);
+    var vt = Math.max(r.top, 0), vb = Math.min(r.bottom, window.innerHeight);
+    var cx = (vl + vr) / 2, cy = (vt + vb) / 2;
+    if (vr - vl >= 1 && vb - vt >= 1 && el.tagName !== 'IFRAME') {
+      var top = document.elementFromPoint(cx, cy);
+      if (top && top !== el && !el.contains(top) && !top.contains(el) && coversWithPlayer(top)) return false;
+    }
     return true;
+  }
+
+  // The element on top belongs to a video player (the frame/video itself or a
+  // wrapper a few levels up that holds one) - i.e. a player is drawn over it.
+  function coversWithPlayer(top) {
+    for (var n = top, i = 0; n && n !== document.body && i < 5; n = n.parentElement, i++) {
+      if (n.tagName === 'IFRAME' || n.tagName === 'VIDEO' || n.querySelector('iframe, video')) return true;
+    }
+    return false;
   }
 
   function isEditable(el) {
@@ -893,6 +922,9 @@
   // scrollable container, not just the document) or layout/viewport change.
   window.addEventListener('scroll', syncFocusRing, true);
   window.addEventListener('resize', syncFocusRing);
+  // Pages also change under the ring on their own (a player opening over the
+  // focused button, controls fading out) - re-check once a second.
+  setInterval(syncFocusRing, 1000);
 
   if (isTrustedHost()) {
     injectDuloPlayerStyles();
