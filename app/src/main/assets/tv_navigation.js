@@ -63,9 +63,24 @@
     return focusRingEl;
   }
 
+  // Set while the player's controls are auto-hidden during playback, so the
+  // ring can't linger on top of the video.
+  var ringSuppressed = false;
+
+  // A ring around the player itself (or anything wrapping the <video>) just
+  // draws a beveled box over the picture - never useful on a TV.
+  function wrapsVideo(el) {
+    return el.tagName === 'VIDEO' || !!el.querySelector('video');
+  }
+
   function syncFocusRing() {
     var ring = ensureFocusRingEl();
-    if (!currentVisualFocusEl || !document.body.contains(currentVisualFocusEl)) {
+    if (
+      ringSuppressed ||
+      !currentVisualFocusEl ||
+      !document.body.contains(currentVisualFocusEl) ||
+      wrapsVideo(currentVisualFocusEl)
+    ) {
       ring.style.opacity = '0';
       return;
     }
@@ -107,11 +122,16 @@
       .slice(0, 56);
   }
 
-  function isVisible(el) {
+  // offscreenY: also accept items scrolled out of view vertically (up to one
+  // extra screen), so Up/Down can target the very next row even when it
+  // hasn't scrolled into the viewport yet.
+  function isVisible(el, offscreenY) {
     if (!el || el.nodeType !== 1) return false;
     var r = el.getBoundingClientRect();
     if (r.width < 4 || r.height < 4) return false;
-    if (r.bottom < 0 || r.top > window.innerHeight) return false;
+    var slack = offscreenY ? window.innerHeight : 0;
+    if (r.bottom < -slack || r.top > window.innerHeight + slack) return false;
+    if (offscreenY && (r.right <= 0 || r.left >= window.innerWidth)) return false;
     var st = window.getComputedStyle(el);
     if (st.visibility === 'hidden' || st.display === 'none' || st.opacity === '0') return false;
     return true;
@@ -149,7 +169,7 @@
 
   var NATURALLY_INTERACTIVE_TAGS = /^(A|BUTTON|INPUT|SELECT|TEXTAREA)$/;
 
-  function collectFocusables() {
+  function collectFocusables(offscreenY) {
     var sel =
       'a[href], button, [role="button"], [role="link"], input, select, textarea, [tabindex]';
     var nodes = Array.prototype.slice.call(document.querySelectorAll(sel));
@@ -157,7 +177,7 @@
     nodes.forEach(function (el) {
       if (el.disabled) return;
       if (el.closest('[inert], [aria-hidden="true"]')) return;
-      if (!isVisible(el)) return;
+      if (!isVisible(el, offscreenY)) return;
       // tabIndex=-1 normally means "skip in spatial nav too" (e.g. our own
       // prepareTabOrder() stashes every other item's tabindex as -1 while one
       // is focused) - but real form controls are routinely given tabIndex=-1
@@ -338,8 +358,52 @@
     return Math.max(primary, 0) + secondary * 2;
   }
 
+  // Up/Down: go to the nearest row first, then the best-aligned item within
+  // it. Plain distance+misalignment scoring skipped short rows - found live:
+  // from a card on the right of "Showcased", the 2-card "Recently watched"
+  // row (cards all on the left) lost to a row further down that happened to
+  // have a card directly below, so Down jumped past it entirely. Alignment
+  // is therefore not required here; instead, page chrome (nav dock, header)
+  // is only used when no content item exists that way.
+  function bestVertical(items, active, r0, direction) {
+    var down = direction === 'down';
+    var activeIsChrome = isChrome(active);
+    var cands = [];
+    items.forEach(function (el) {
+      if (el === active) return;
+      var r = rect(el);
+      if (down ? r.top < r0.bottom - 1 : r.bottom > r0.top + 1) return;
+      cands.push({ el: el, r: r, chrome: isChrome(el) });
+    });
+    if (!activeIsChrome) {
+      var content = cands.filter(function (c) { return !c.chrome; });
+      if (content.length) cands = content;
+    }
+    if (!cands.length) return null;
+
+    var nearest = null;
+    cands.forEach(function (c) {
+      var d = down ? c.r.top - r0.bottom : r0.top - c.r.bottom;
+      if (!nearest || d < nearest.d) nearest = { c: c, d: d };
+    });
+    var n = nearest.c.r;
+    var best = null;
+    var bestSecondary = Infinity;
+    cands.forEach(function (c) {
+      var inRow = down ? c.r.top < n.bottom : c.r.bottom > n.top;
+      if (!inRow) return;
+      var secondary = Math.abs(r0.cx - c.r.cx);
+      if (secondary < bestSecondary) {
+        bestSecondary = secondary;
+        best = c.el;
+      }
+    });
+    return best;
+  }
+
   function moveFocus(direction) {
-    var items = collectFocusables();
+    var vertical = direction === 'up' || direction === 'down';
+    var items = collectFocusables(vertical);
     if (!items.length) return false;
 
     var active = currentFocus && document.body.contains(currentFocus) ? currentFocus : document.activeElement;
@@ -351,16 +415,20 @@
     var r0 = rect(active);
     var best = null;
     var bestScore = Infinity;
-    items.forEach(function (el) {
-      if (el === active) return;
-      var r = rect(el);
-      if (!isCandidate(r0, r, direction)) return;
-      var score = candidateScore(r0, r, direction);
-      if (score < bestScore) {
-        bestScore = score;
-        best = el;
-      }
-    });
+    if (vertical) {
+      best = bestVertical(items, active, r0, direction);
+    } else {
+      items.forEach(function (el) {
+        if (el === active) return;
+        var r = rect(el);
+        if (!isCandidate(r0, r, direction)) return;
+        var score = candidateScore(r0, r, direction);
+        if (score < bestScore) {
+          bestScore = score;
+          best = el;
+        }
+      });
+    }
 
     if (best) {
       setFocus(best, 'move-' + direction);
@@ -558,8 +626,41 @@
       // which is the correct behavior for wider-than-16:9 sources.
       'video.object-fill, video[class*="object-fill"] {' +
       'object-fit: contain !important;' +
+      '}' +
+      // Invert the site's Fit/Fill meaning so our default is Fill screen.
+      // Site default is object-contain ("Fit picture"); we want object-cover
+      // ("Fill screen"). Swap them so the site's classes produce the opposite
+      // visual result without changing any site markup or state.
+      'video.dulo-caption-video.object-contain {' +
+      'object-fit: cover !important;' +
+      '}' +
+      '.settings-ratio .settings-tile-value[data-dulo-shown] { visibility: hidden; position: relative; }' +
+      '.settings-ratio .settings-tile-value[data-dulo-shown]::after {' +
+      'content: attr(data-dulo-shown); visibility: visible; position: absolute; right: 0; top: 0; white-space: nowrap;' +
+      '}' +
+      'video.dulo-caption-video.object-cover {' +
+      'object-fit: contain !important;' +
       '}';
     document.head.appendChild(s);
+  }
+
+  // The site's Picture size label still describes ITS state, which our CSS
+  // above inverts. The site's own text node is left untouched (replacing it
+  // would detach the node the site keeps updating on every toggle); it is
+  // hidden by CSS and the swapped label is drawn from data-dulo-shown instead.
+  // Only an attribute is written here, which the observer doesn't watch, so
+  // there's no feedback loop.
+  var RATIO_SWAP = { 'Fit picture': 'Fill screen', 'Fill screen': 'Fit picture' };
+
+  function setupRatioLabelInverter() {
+    new MutationObserver(function () {
+      var spans = document.querySelectorAll('.settings-ratio .settings-tile-value');
+      for (var i = 0; i < spans.length; i++) {
+        var shown = RATIO_SWAP[(spans[i].textContent || '').trim()];
+        if (!shown || spans[i].getAttribute('data-dulo-shown') === shown) continue;
+        spans[i].setAttribute('data-dulo-shown', shown);
+      }
+    }).observe(document.documentElement, { characterData: true, childList: true, subtree: true });
   }
 
   function isVideoPlayingNow() {
@@ -594,6 +695,10 @@
       overlay.style.opacity = '';
       overlay.style.pointerEvents = '';
     }
+    if (ringSuppressed) {
+      ringSuppressed = false;
+      syncFocusRing();
+    }
     schedulePlayerControlsHide();
   }
 
@@ -625,8 +730,12 @@
     // that outlived the controls it was supposed to be highlighting.
     if (overlay.contains(currentVisualFocusEl)) {
       currentVisualFocusEl = null;
-      syncFocusRing();
     }
+    // Focus can also sit outside the overlay (the player wrapper, a page
+    // element behind it) - hide the ring entirely while the video plays
+    // with controls hidden, not only when it was on an overlay button.
+    ringSuppressed = true;
+    syncFocusRing();
     overlay.style.opacity = '0';
     overlay.style.pointerEvents = 'none';
   }
@@ -787,6 +896,7 @@
 
   if (isTrustedHost()) {
     injectDuloPlayerStyles();
+    setupRatioLabelInverter();
     // Capture-phase 'play' fires for any <video> as soon as playback starts
     // (including on resume after a pause) - (re)arm the idle-hide timer then.
     document.addEventListener(
