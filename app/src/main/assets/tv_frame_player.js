@@ -76,6 +76,17 @@
     e.stopImmediatePropagation();
   }, true);
 
+  // Remote keys relayed by the app's page script (tv_navigation.js) - only
+  // from our direct parent page, never from other frames.
+  window.addEventListener('message', function (e) {
+    var k = e.data && e.data.duloTvKey;
+    if (!k || e.source !== window.parent) return;
+    var v = video();
+    if (!v) return;
+    if (k === 'left' || k === 'right') seek(v, k === 'right' ? 1 : -1);
+    else if (k === 'enter') toggle(v);
+  });
+
   document.addEventListener('pause', function (e) { if (e.target.tagName === 'VIDEO') showOsd(e.target); }, true);
   document.addEventListener('play', function (e) { if (e.target.tagName === 'VIDEO') showOsd(e.target); }, true);
 })();

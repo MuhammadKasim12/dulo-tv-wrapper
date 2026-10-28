@@ -5,11 +5,9 @@ import android.app.Activity
 import android.app.AlertDialog
 import android.net.Uri
 import android.os.Bundle
-import android.os.SystemClock
 import android.util.Base64
 import android.util.Log
 import android.view.KeyEvent
-import android.view.MotionEvent
 import android.view.View
 import android.webkit.WebChromeClient
 import android.webkit.WebSettings
@@ -269,11 +267,6 @@ class MainActivity : Activity(), DuloTvJsBridge.PlaybackListener {
                 }
             }
         }
-        if (playerFrameMode && event.keyCode in DPAD_KEYS) {
-            // An embedded player has the remote (see tapPlayerFrame): hand D-pad
-            // to the WebView natively so it reaches the player's own key handling.
-            return super.dispatchKeyEvent(event)
-        }
         if (customView != null) {
             // True Fullscreen-API video: no overlay UI of ours applies here at
             // all, hand everything to the native page.
@@ -306,7 +299,7 @@ class MainActivity : Activity(), DuloTvJsBridge.PlaybackListener {
                 // explosively (a single "hold" jumped over 600 seconds). Only
                 // forward genuinely new presses; silently ignore repeat echoes.
                 if (event.repeatCount == 0) {
-                    forwardDpadToPage(direction)
+                    forwardDpadToPage(direction, event)
                 }
                 return true
             }
@@ -314,6 +307,13 @@ class MainActivity : Activity(), DuloTvJsBridge.PlaybackListener {
             // onKeyDown's dedicated back-stack handling, unchanged.
         }
         return super.dispatchKeyEvent(event)
+    }
+
+    /** Same movie on dulo.site (better releases); both sites use TMDB ids. */
+    private fun openOnDuloSite() {
+        val m = Regex("/watch/(movie|tv)/(\\d+)").find(Uri.parse(binding.webview.url ?: "").path.orEmpty())
+        val target = if (m != null) "https://dulo.site/?info=${m.groupValues[1]}:${m.groupValues[2]}" else "https://dulo.site/"
+        binding.webview.loadUrl(target)
     }
 
     private fun showMainMenu() {
@@ -326,6 +326,7 @@ class MainActivity : Activity(), DuloTvJsBridge.PlaybackListener {
                     "Subtitles",
                     "Audio track",
                     "Speed",
+                    "Play on dulo.site",
                 )
             ) { dialog, which ->
                 when (which) {
@@ -334,6 +335,7 @@ class MainActivity : Activity(), DuloTvJsBridge.PlaybackListener {
                     2 -> withPlaybackState(::openSubtitleDialog)
                     3 -> withPlaybackState(::openAudioDialog)
                     4 -> withPlaybackState(::openSpeedDialog)
+                    5 -> openOnDuloSite()
                 }
                 dialog.dismiss()
             }
@@ -587,35 +589,19 @@ class MainActivity : Activity(), DuloTvJsBridge.PlaybackListener {
         else -> null
     }
 
-    private fun forwardDpadToPage(direction: String) {
+    private fun forwardDpadToPage(direction: String, event: KeyEvent? = null) {
         binding.webview.evaluateJavascript(
             "window.__duloTvHandleKey && window.__duloTvHandleKey('$direction');"
         ) { result ->
-            // "tap:x,y,viewportWidth" = Enter on an embedded player frame
-            val m = Regex("\"tap:(\\d+),(\\d+),(\\d+)\"").find(result ?: "") ?: return@evaluateJavascript
-            runOnUiThread {
-                val scale = binding.webview.width / m.groupValues[3].toFloat()
-                tapPlayerFrame(m.groupValues[1].toFloat() * scale, m.groupValues[2].toFloat() * scale)
+            // "native" = focus is on an embedded player frame: deliver the key to
+            // the WebView itself so it reaches the frame's own key handling.
+            if (result == "\"native\"" && event != null) {
+                runOnUiThread {
+                    binding.webview.dispatchKeyEvent(KeyEvent(event))
+                    binding.webview.dispatchKeyEvent(KeyEvent(KeyEvent.ACTION_UP, event.keyCode))
+                }
             }
         }
-    }
-
-    // While true, D-pad goes to the WebView natively instead of our spatial
-    // nav, so a cross-origin player gets Enter/arrows like from a keyboard.
-    // Back leaves this mode.
-    private var playerFrameMode = false
-
-    private fun tapPlayerFrame(x: Float, y: Float) {
-        val t = SystemClock.uptimeMillis()
-        val down = MotionEvent.obtain(t, t, MotionEvent.ACTION_DOWN, x, y, 0)
-        val up = MotionEvent.obtain(t, t + 60, MotionEvent.ACTION_UP, x, y, 0)
-        binding.webview.dispatchTouchEvent(down)
-        binding.webview.dispatchTouchEvent(up)
-        down.recycle()
-        up.recycle()
-        binding.webview.requestFocus()
-        playerFrameMode = true
-        Toast.makeText(this, "Remote controls the player · Back to leave", Toast.LENGTH_SHORT).show()
     }
 
     override fun onKeyDown(keyCode: Int, event: KeyEvent?): Boolean {
@@ -630,11 +616,6 @@ class MainActivity : Activity(), DuloTvJsBridge.PlaybackListener {
             // to native navigation if it says there was nothing to close.
             // evaluateJavascript is async, so the key press is consumed
             // immediately and the actual decision happens in the callback.
-            if (playerFrameMode) {
-                playerFrameMode = false
-                binding.webview.evaluateJavascript("window.__duloTvNavRefresh && window.__duloTvNavRefresh(true);", null)
-                return true
-            }
             if (customView == null) {
                 binding.webview.evaluateJavascript(
                     "(window.__duloTvHandleBack ? window.__duloTvHandleBack() : false);"

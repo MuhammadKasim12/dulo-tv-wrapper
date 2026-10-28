@@ -245,6 +245,16 @@
     return area > window.innerWidth * window.innerHeight * 0.2 ? best : null;
   }
 
+  // The frame actually drawn at the middle of the screen - not just the
+  // biggest one (found live: dulo.site keeps a larger, hidden YouTube trailer
+  // frame around, which swallowed the relayed keys).
+  function fullscreenPlayerFrame() {
+    var top = document.elementFromPoint(window.innerWidth / 2, window.innerHeight / 2);
+    if (!top || top.tagName !== 'IFRAME') return null;
+    var r = top.getBoundingClientRect();
+    return r.width * r.height > window.innerWidth * window.innerHeight * 0.6 ? top : null;
+  }
+
   function prepareTabOrder(items) {
     items.forEach(function (el) {
       if (el.dataset.duloOrigTab === undefined) {
@@ -873,6 +883,19 @@
   window.__duloTvHandleKey = function (direction) {
     var dir = String(direction || '').toLowerCase();
 
+    // An embedded player filling the screen gets Left/Right/Enter as a message
+    // (tv_frame_player.js seeks / plays / pauses inside the frame). Not via DOM
+    // focus: found live, dulo.site's player dialog traps focus on its Close
+    // button, so focus-based delivery never reached the player. Up/Down still
+    // navigate the page (e.g. to that Close button).
+    if (dir === 'left' || dir === 'right' || dir === 'enter' || dir === 'select') {
+      var frame = fullscreenPlayerFrame();
+      if (frame && frame.contentWindow) {
+        frame.contentWindow.postMessage({ duloTvKey: dir === 'select' ? 'enter' : dir }, '*');
+        return true;
+      }
+    }
+
     if (isTrustedHost() && hasVideo()) {
       var overlay = findPlayerControlsOverlay();
       if (overlay && overlay.style.opacity === '0') {
@@ -899,15 +922,6 @@
     }
 
     if (dir === 'enter' || dir === 'select') {
-      var focused = currentFocus || document.activeElement;
-      if (focused && focused.tagName === 'IFRAME') {
-        // CSS px + viewport width; MainActivity scales by its own view width
-        // (devicePixelRatio was found live to be unreliable on these pages).
-        var fr = focused.getBoundingClientRect();
-        currentVisualFocusEl = null;
-        syncFocusRing();
-        return 'tap:' + Math.round(fr.left + fr.width / 2) + ',' + Math.round(fr.top + fr.height / 2) + ',' + window.innerWidth;
-      }
       return handleEnter();
     }
     if (dir === 'left' || dir === 'right' || dir === 'up' || dir === 'down') {
@@ -964,6 +978,8 @@
   // (found live: dulo.site's Play button under the player it just opened),
   // move focus to what's on screen now - the player, if there is one.
   setInterval(function () {
+    // A player filling most of the screen takes the remote (found live:
+    // dulo.site's player opened over a still-"visible" page button).
     if (focusIsStale()) initialFocus();
     syncFocusRing();
   }, 1000);
