@@ -127,6 +127,12 @@ class MainActivity : Activity(), DuloTvJsBridge.PlaybackListener {
                     "(document.head||document.documentElement).appendChild(s);})();",
                 setOf("*")
             )
+            // Dulo-style seek/play-pause/OSD inside embedded player frames.
+            WebViewCompat.addDocumentStartJavaScript(
+                webView,
+                assets.open("tv_frame_player.js").bufferedReader().use { it.readText() },
+                setOf("*")
+            )
         }
 
         webView.isFocusable = true
