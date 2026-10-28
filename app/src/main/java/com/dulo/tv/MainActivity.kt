@@ -148,6 +148,10 @@ class MainActivity : Activity(), DuloTvJsBridge.PlaybackListener {
                 Log.d(TAG, "page finished url=$url")
                 if (view != null) {
                     injectScripts(view, url?.let { Uri.parse(it).host })
+                    if (autoPlayOnDuloSite && Uri.parse(url ?: "").host == "dulo.site") {
+                        autoPlayOnDuloSite = false
+                        pressDuloSitePlay()
+                    }
                 }
             }
         }
@@ -313,7 +317,27 @@ class MainActivity : Activity(), DuloTvJsBridge.PlaybackListener {
     private fun openOnDuloSite() {
         val m = Regex("/watch/(movie|tv)/(\\d+)").find(Uri.parse(binding.webview.url ?: "").path.orEmpty())
         val target = if (m != null) "https://dulo.site/?info=${m.groupValues[1]}:${m.groupValues[2]}" else "https://dulo.site/"
+        autoPlayOnDuloSite = m != null
         binding.webview.loadUrl(target)
+    }
+
+    // Set by openOnDuloSite: once dulo.site's title page is up, press its Play
+    // button for the user so the menu entry goes straight into the movie.
+    private var autoPlayOnDuloSite = false
+
+    private fun pressDuloSitePlay(tries: Int = 30) {
+        // Click Play until the movie's player frame exists - a click made before
+        // the page has hydrated is silently ignored (found live).
+        binding.webview.evaluateJavascript(
+            "(function(){" +
+                "if([].some.call(document.querySelectorAll('iframe'),function(f){return f.src&&!/youtube/.test(f.src)}))return 'playing';" +
+                "var b=[].find.call(document.querySelectorAll('a,button'),function(x){return /^\\s*play\\s*$/i.test(x.textContent||'')});" +
+                "if(b)b.click();return 'waiting'})()"
+        ) { result ->
+            if (result != "\"playing\"" && tries > 1) {
+                binding.webview.postDelayed({ pressDuloSitePlay(tries - 1) }, 800)
+            }
+        }
     }
 
     private fun showMainMenu() {

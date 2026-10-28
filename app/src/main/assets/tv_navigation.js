@@ -553,7 +553,7 @@
     setTimeout(function () {
       var after = getScrollPos(container, axis);
       if (Math.abs(after - before) < 1) {
-        log('scroll-' + direction + ' had no effect; nothing further that way');
+        wrapFocus(direction, active);
         return;
       }
 
@@ -583,6 +583,39 @@
     }, 220);
 
     return true;
+  }
+
+  // At the edge, wrap around: Right on the last item of a row goes to its
+  // first item (and Left vice versa); Down at the very bottom goes back to the
+  // top of the page, Up at the very top to the bottom.
+  function wrapFocus(direction, active) {
+    var r0 = rect(active);
+    var target = null;
+    if (direction === 'left' || direction === 'right') {
+      var row = collectFocusables().filter(function (el) {
+        return el !== active && perpendicularAligned(r0, rect(el), 'y');
+      });
+      row.forEach(function (el) {
+        var r = rect(el);
+        if (!target ||
+            (direction === 'right' ? r.left < rect(target).left : r.right > rect(target).right)) target = el;
+      });
+      if (target) {
+        var sc = findScrollParent(target, 'x');
+        if (!isDocumentScroller(sc)) sc.scrollLeft = direction === 'right' ? 0 : sc.scrollWidth;
+        setFocus(target, 'wrap-' + direction);
+      }
+      return;
+    }
+    window.scrollTo(0, direction === 'down' ? 0 : document.documentElement.scrollHeight);
+    setTimeout(function () {
+      var items = collectFocusables().filter(function (el) { return !isSkipLink(el); });
+      items.forEach(function (el) {
+        var r = rect(el);
+        if (!target || (direction === 'down' ? r.top < rect(target).top : r.bottom > rect(target).bottom)) target = el;
+      });
+      if (target) setFocus(target, 'wrap-' + direction);
+    }, 220);
   }
 
   function handleEnter() {
