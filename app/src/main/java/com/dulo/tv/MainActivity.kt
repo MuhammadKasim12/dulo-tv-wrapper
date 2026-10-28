@@ -542,8 +542,12 @@ class MainActivity : Activity(), DuloTvJsBridge.PlaybackListener {
     }
 
     private fun setPlaybackRate(rate: Double) {
+        // An embedded player (dulo.site) gets the speed as a message; Dulo's own
+        // player through tv_playback.js as before.
         binding.webview.evaluateJavascript(
-            "window.__duloTvSetPlaybackRate && window.__duloTvSetPlaybackRate($rate);",
+            "(function(){var f=window.__duloTvPlayerFrame&&window.__duloTvPlayerFrame();" +
+                "if(f&&f.contentWindow){f.contentWindow.postMessage({duloTvRate:$rate},'*');return;}" +
+                "window.__duloTvSetPlaybackRate&&window.__duloTvSetPlaybackRate($rate);})()",
             null
         )
     }

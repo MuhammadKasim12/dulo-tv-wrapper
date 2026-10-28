@@ -87,6 +87,16 @@
     else if (k === 'enter') toggle(v);
   });
 
+  // Playback speed from the app's menu (relayed the same way).
+  window.addEventListener('message', function (e) {
+    var rate = e.data && e.data.duloTvRate;
+    if (!rate || e.source !== window.parent) return;
+    var v = video();
+    if (!v) return;
+    v.playbackRate = rate;
+    showOsd(v, rate === 1 ? 'Normal speed' : rate + 'x');
+  });
+
   document.addEventListener('pause', function (e) { if (e.target.tagName === 'VIDEO') showOsd(e.target); }, true);
   document.addEventListener('play', function (e) { if (e.target.tagName === 'VIDEO') showOsd(e.target); }, true);
 })();

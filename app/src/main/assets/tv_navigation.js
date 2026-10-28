@@ -989,6 +989,9 @@
   // Hold Up / hold Down on the remote (MainActivity): jump straight to the
   // page's top bar (menu, search) or bottom bar (Home/Movies/Live/...), which
   // row-by-row navigation only reaches at the very top/bottom of a long page.
+  // Lets MainActivity reach an embedded player (menu Speed on dulo.site).
+  window.__duloTvPlayerFrame = function () { return fullscreenPlayerFrame(); };
+
   window.__duloTvJumpChrome = function (direction) {
     var down = direction === 'down';
     var cx = currentFocus ? rect(currentFocus).cx : window.innerWidth / 2;
