@@ -16,6 +16,8 @@ import android.webkit.WebViewClient
 import android.widget.EditText
 import android.widget.FrameLayout
 import android.widget.Toast
+import androidx.webkit.WebViewCompat
+import androidx.webkit.WebViewFeature
 import com.dulo.tv.databinding.ActivityMainBinding
 import org.json.JSONArray
 import org.json.JSONObject
@@ -109,6 +111,21 @@ class MainActivity : Activity(), DuloTvJsBridge.PlaybackListener {
         settings.allowFileAccess = false
         settings.allowContentAccess = false
         settings.mixedContentMode = WebSettings.MIXED_CONTENT_COMPATIBILITY_MODE
+
+        // Embedded players (found live: dulo.site's vidstuck.cc frame) put a CSS
+        // filter on <video>; on the Fire TV WebView that drops the video layer -
+        // sound and subtitles play over a black screen. Injected at document
+        // start into every frame, including cross-origin ones our page scripts
+        // can't reach. Confirmed live: removing the filter brought the picture back.
+        if (WebViewFeature.isFeatureSupported(WebViewFeature.DOCUMENT_START_SCRIPT)) {
+            WebViewCompat.addDocumentStartJavaScript(
+                webView,
+                "(function(){var s=document.createElement('style');" +
+                    "s.textContent='video{filter:none !important}';" +
+                    "(document.head||document.documentElement).appendChild(s);})();",
+                setOf("*")
+            )
+        }
 
         webView.isFocusable = true
         webView.isFocusableInTouchMode = true
