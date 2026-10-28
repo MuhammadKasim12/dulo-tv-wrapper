@@ -22,7 +22,7 @@ import org.json.JSONObject
 import org.json.JSONTokener
 
 /**
- * WebView wrapper for https://dulo.sx (formerly dulo.mov) with TV navigation, playback helpers,
+ * WebView wrapper for https://dulo.mov with TV navigation, playback helpers,
  * OpenSubtitles-style external subtitles, and in-page language/track selection.
  */
 class MainActivity : Activity(), DuloTvJsBridge.PlaybackListener {
@@ -37,7 +37,7 @@ class MainActivity : Activity(), DuloTvJsBridge.PlaybackListener {
 
     companion object {
         private const val TAG = "DuloTvNav"
-        private const val HOME_URL = "https://dulo.sx"
+        private const val HOME_URL = "https://dulo.mov"
 
         /**
          * tv_navigation.js (D-pad spatial focus) is injected on every host so the
