@@ -196,16 +196,19 @@
     };
   }
 
-  var NATURALLY_INTERACTIVE_TAGS = /^(A|BUTTON|INPUT|SELECT|TEXTAREA)$/;
+  var NATURALLY_INTERACTIVE_TAGS = /^(A|BUTTON|INPUT|SELECT|TEXTAREA|IFRAME)$/;
 
   function collectFocusables(offscreenY) {
     var sel =
-      'a[href], button, [role="button"], [role="link"], input, select, textarea, [tabindex]';
+      'a[href], button, [role="button"], [role="link"], input, select, textarea, [tabindex], iframe';
     var nodes = Array.prototype.slice.call(document.querySelectorAll(sel));
     var out = [];
     nodes.forEach(function (el) {
       if (el.disabled) return;
-      if (el.closest('[inert], [aria-hidden="true"]')) return;
+      if (el.tagName === 'IFRAME' && !isPlayerFrame(el)) return;
+      // dulo.site wraps its player frame in aria-hidden="true" (a screen-reader
+      // hint, not real hiddenness) - only inert rules a player frame out.
+      if (el.closest(el.tagName === 'IFRAME' ? '[inert]' : '[inert], [aria-hidden="true"]')) return;
       if (!isVisible(el, offscreenY)) return;
       // tabIndex=-1 normally means "skip in spatial nav too" (e.g. our own
       // prepareTabOrder() stashes every other item's tabindex as -1 while one
@@ -220,6 +223,26 @@
       out.push(el);
     });
     return out;
+  }
+
+  // A video player embedded from another site (found live: dulo.site's
+  // vidstuck.cc frame) is a cross-origin <iframe> this script can't reach
+  // into, so remote keys never got to it. It's focusable here; Enter on it
+  // asks MainActivity for a native tap at its center, and from then on
+  // MainActivity hands D-pad to the WebView natively until Back.
+  function isPlayerFrame(el) {
+    var r = el.getBoundingClientRect();
+    return r.width >= 300 && r.height >= 150;
+  }
+
+  function biggestPlayerFrame(items) {
+    var best = null, area = 0;
+    items.forEach(function (el) {
+      if (el.tagName !== 'IFRAME') return;
+      var r = el.getBoundingClientRect();
+      if (r.width * r.height > area) { area = r.width * r.height; best = el; }
+    });
+    return area > window.innerWidth * window.innerHeight * 0.2 ? best : null;
   }
 
   function prepareTabOrder(items) {
@@ -332,7 +355,9 @@
     var contentItems = items.filter(function (el) {
       return !isChrome(el) && !isSkipLink(el);
     });
-    var target = (contentItems.length ? contentItems : items)[0];
+    // A page whose player is an embedded frame starts on the player, so a
+    // single Enter reaches it.
+    var target = biggestPlayerFrame(items) || (contentItems.length ? contentItems : items)[0];
     setFocus(target, 'init');
   }
 
@@ -873,7 +898,18 @@
       // Left/Right/Enter move between/activate buttons instead.
     }
 
-    if (dir === 'enter' || dir === 'select') return handleEnter();
+    if (dir === 'enter' || dir === 'select') {
+      var focused = currentFocus || document.activeElement;
+      if (focused && focused.tagName === 'IFRAME') {
+        // CSS px + viewport width; MainActivity scales by its own view width
+        // (devicePixelRatio was found live to be unreliable on these pages).
+        var fr = focused.getBoundingClientRect();
+        currentVisualFocusEl = null;
+        syncFocusRing();
+        return 'tap:' + Math.round(fr.left + fr.width / 2) + ',' + Math.round(fr.top + fr.height / 2) + ',' + window.innerWidth;
+      }
+      return handleEnter();
+    }
     if (dir === 'left' || dir === 'right' || dir === 'up' || dir === 'down') {
       return moveFocus(dir);
     }
@@ -924,7 +960,13 @@
   window.addEventListener('resize', syncFocusRing);
   // Pages also change under the ring on their own (a player opening over the
   // focused button, controls fading out) - re-check once a second.
-  setInterval(syncFocusRing, 1000);
+  // Same for focus itself: once the focused element is hidden or covered
+  // (found live: dulo.site's Play button under the player it just opened),
+  // move focus to what's on screen now - the player, if there is one.
+  setInterval(function () {
+    if (focusIsStale()) initialFocus();
+    syncFocusRing();
+  }, 1000);
 
   if (isTrustedHost()) {
     injectDuloPlayerStyles();
