@@ -471,7 +471,8 @@ class MainActivity : Activity(), DuloTvJsBridge.PlaybackListener {
     // on window or the video element for script injected after page load to
     // find, so quality selection isn't offered here at all).
     private fun openSpeedDialog(state: JSONObject) {
-        val currentRate = state.optDouble("playbackRate", 1.0)
+        // An embedded player's speed isn't visible to the page state; use the last pick.
+        val currentRate = if (state.has("playbackRate")) state.optDouble("playbackRate", lastRate) else lastRate
         val items = mutableListOf<String>()
         val actions = mutableListOf<() -> Unit>()
         for (rate in SPEED_OPTIONS) {
@@ -541,7 +542,10 @@ class MainActivity : Activity(), DuloTvJsBridge.PlaybackListener {
         )
     }
 
+    private var lastRate = 1.0
+
     private fun setPlaybackRate(rate: Double) {
+        lastRate = rate
         // An embedded player (dulo.site) gets the speed as a message; Dulo's own
         // player through tv_playback.js as before.
         binding.webview.evaluateJavascript(

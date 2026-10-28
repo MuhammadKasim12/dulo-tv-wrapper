@@ -91,10 +91,21 @@
   window.addEventListener('message', function (e) {
     var rate = e.data && e.data.duloTvRate;
     if (!rate || e.source !== window.parent) return;
+    wantRate = rate;
     var v = video();
     if (!v) return;
     v.playbackRate = rate;
     showOsd(v, rate === 1 ? 'Normal speed' : rate + 'x');
+  });
+
+  // Keep the chosen speed: players reset playbackRate on their own (new
+  // source, seek, quality switch) - found live, the speed didn't stick.
+  var wantRate = 1;
+  ['ratechange', 'loadedmetadata', 'playing'].forEach(function (t) {
+    document.addEventListener(t, function (e) {
+      var v = e.target;
+      if (v.tagName === 'VIDEO' && wantRate !== 1 && Math.abs(v.playbackRate - wantRate) > 0.01) v.playbackRate = wantRate;
+    }, true);
   });
 
   document.addEventListener('pause', function (e) { if (e.target.tagName === 'VIDEO') showOsd(e.target); }, true);
